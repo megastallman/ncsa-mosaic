@@ -458,6 +458,487 @@ static char *convert_charset_to_utf8 (char *txt)
 
 
 /****************************************************************************
+ * Inline iframe expansion: when a fetched HTML document contains
+ * <iframe src=...> elements, fetch each framed document through the
+ * same pipeline (so charset conversion applies) and splice its body
+ * into the parent text between <hr> rules, with relative URLs
+ * rewritten to absolute ones so links, images and forms keep
+ * working.  One level deep only: iframes inside a framed document
+ * become plain links.  When a frame cannot be fetched it becomes a
+ * link too; an iframe with no usable src is left alone so its
+ * fallback content renders.
+ ****************************************************************************/
+
+#define IFRAME_MAX        8       /* frames expanded per document */
+#define IFRAME_MAX_BYTES  262144  /* bigger framed docs become links */
+
+static int iframe_depth = 0;
+
+static char *doit (char *url, char **texthead);
+static char *expand_iframes (char *txt, char *base, char **texthead);
+
+/* growing string buffer */
+struct str_buf {
+  char *buf;
+  int len, cap;
+};
+
+static void sbuf_add (struct str_buf *s, char *data, int n)
+{
+  if (n <= 0)
+    return;
+  if (s->len + n + 1 > s->cap)
+    {
+      s->cap = (s->cap ? s->cap * 2 : 8192);
+      if (s->cap < s->len + n + 1)
+        s->cap = s->len + n + 1;
+      s->buf = (char *)realloc (s->buf, s->cap);
+    }
+  memcpy (s->buf + s->len, data, n);
+  s->len += n;
+  s->buf[s->len] = '\0';
+}
+
+static void sbuf_adds (struct str_buf *s, char *str)
+{
+  sbuf_add (s, str, strlen (str));
+}
+
+/* case-insensitive strstr */
+static char *ci_find (char *hay, char *needle)
+{
+  int n = strlen (needle);
+
+  if (!hay)
+    return NULL;
+  for (; *hay; hay++)
+    if (!my_strncasecmp (hay, needle, n))
+      return hay;
+  return NULL;
+}
+
+/* extract an attribute value from tag text (between '<' and '>');
+   returns a malloc'd copy or NULL */
+static char *tag_attr (char *tag, char *tagend, char *name)
+{
+  int n = strlen (name);
+  char *p;
+
+  for (p = tag; p + n < tagend; p++)
+    {
+      if (!isspace ((unsigned char)p[0]))
+        continue;
+      if (my_strncasecmp (p + 1, name, n))
+        continue;
+      p += 1 + n;
+      while (p < tagend && isspace ((unsigned char)*p))
+        p++;
+      if (p >= tagend || *p != '=')
+        {
+          p--;
+          continue;
+        }
+      p++;
+      while (p < tagend && isspace ((unsigned char)*p))
+        p++;
+      if (p < tagend && (*p == '"' || *p == '\''))
+        {
+          char quote = *p++;
+          char *e = p;
+          char *val;
+
+          while (e < tagend && *e != quote)
+            e++;
+          val = (char *)malloc (e - p + 1);
+          strncpy (val, p, e - p);
+          val[e - p] = '\0';
+          return val;
+        }
+      else
+        {
+          char *e = p;
+          char *val;
+
+          while (e < tagend && !isspace ((unsigned char)*e) && *e != '>')
+            e++;
+          if (e == p)
+            return NULL;
+          val = (char *)malloc (e - p + 1);
+          strncpy (val, p, e - p);
+          val[e - p] = '\0';
+          return val;
+        }
+    }
+  return NULL;
+}
+
+/* does the reference already carry a scheme (http:, mailto:, ...)? */
+static int has_scheme (char *ref)
+{
+  char *p = ref;
+
+  if (!isalpha ((unsigned char)*p))
+    return 0;
+  while (*p && (isalnum ((unsigned char)*p) ||
+                *p == '+' || *p == '-' || *p == '.'))
+    p++;
+  return (*p == ':');
+}
+
+/* resolve a possibly-relative reference against base; malloc'd */
+static char *resolve_ref (char *ref, char *base)
+{
+  if (!ref || !*ref || *ref == '#' || has_scheme (ref))
+    return NULL;
+  return HTParse (ref, base, PARSE_ALL);
+}
+
+/* copy html into out, resolving relative href/src/action/background
+   attribute values inside tags against base */
+static void rewrite_urls (struct str_buf *out, char *html, char *base)
+{
+  static char *attrs[] = { "href", "src", "action", "background", NULL };
+  char *p = html;
+
+  while (*p)
+    {
+      char *lt = strchr (p, '<');
+      char *gt;
+      char *q;
+
+      if (!lt)
+        {
+          sbuf_adds (out, p);
+          return;
+        }
+      gt = strchr (lt, '>');
+      if (!gt)
+        {
+          sbuf_adds (out, p);
+          return;
+        }
+      sbuf_add (out, p, lt - p);
+
+      /* walk the tag, rewriting attribute values */
+      q = lt;
+      while (q < gt)
+        {
+          int i, n;
+          char *v, *ve, *val, *abs;
+          char quote;
+
+          if (!isspace ((unsigned char)*q))
+            {
+              sbuf_add (out, q, 1);
+              q++;
+              continue;
+            }
+          for (i = 0; attrs[i]; i++)
+            {
+              n = strlen (attrs[i]);
+              if (q + 1 + n < gt &&
+                  !my_strncasecmp (q + 1, attrs[i], n))
+                {
+                  v = q + 1 + n;
+                  while (v < gt && isspace ((unsigned char)*v))
+                    v++;
+                  if (v < gt && *v == '=')
+                    break;
+                }
+            }
+          if (!attrs[i])
+            {
+              sbuf_add (out, q, 1);
+              q++;
+              continue;
+            }
+          v++; /* past '=' */
+          while (v < gt && isspace ((unsigned char)*v))
+            v++;
+          quote = 0;
+          if (v < gt && (*v == '"' || *v == '\''))
+            quote = *v++;
+          ve = v;
+          if (quote)
+            while (ve < gt && *ve != quote)
+              ve++;
+          else
+            while (ve < gt && !isspace ((unsigned char)*ve))
+              ve++;
+          val = (char *)malloc (ve - v + 1);
+          strncpy (val, v, ve - v);
+          val[ve - v] = '\0';
+          abs = resolve_ref (val, base);
+          sbuf_add (out, q, 1);   /* the leading space */
+          sbuf_adds (out, attrs[i]);
+          sbuf_adds (out, "=\"");
+          sbuf_adds (out, abs ? abs : val);
+          sbuf_adds (out, "\"");
+          free (val);
+          if (abs)
+            free (abs);
+          q = ve;
+          if (quote && q < gt)
+            q++; /* closing quote */
+        }
+      sbuf_add (out, gt, 1);
+      p = gt + 1;
+    }
+}
+
+/* append the body of a fetched framed document, minus <title> and
+   nested <iframe> blocks (those become links), with URLs rewritten */
+static void splice_subdoc (struct str_buf *out, char *sub, char *base)
+{
+  char *start = sub;
+  char *end;
+  char *p;
+  struct str_buf clean;
+
+  /* use the <body> content when the document declares one */
+  p = ci_find (sub, "<body");
+  if (p && (isspace ((unsigned char)p[5]) || p[5] == '>'))
+    {
+      char *gt = strchr (p, '>');
+
+      if (gt)
+        start = gt + 1;
+    }
+  end = ci_find (start, "</body");
+  if (!end)
+    end = start + strlen (start);
+
+  /* strip <title>/<iframe> blocks from the fragment */
+  memset (&clean, 0, sizeof (clean));
+  p = start;
+  while (p < end)
+    {
+      char *blk = NULL, *closer = NULL;
+      char *t = ci_find (p, "<title");
+      char *f = ci_find (p, "<iframe");
+
+      if (t && t < end && (!f || t < f))
+        {
+          blk = t;
+          closer = "</title";
+        }
+      else if (f && f < end)
+        {
+          blk = f;
+          closer = "</iframe";
+        }
+      if (!blk || blk >= end)
+        break;
+      sbuf_add (&clean, p, blk - p);
+      p = strchr (blk, '>');
+      if (!p || p >= end)
+        {
+          p = end;
+          break;
+        }
+      p++;
+      if (closer[2] == 'i') /* nested iframe: leave a link behind */
+        {
+          char *tagend = p - 1;
+          char *src = tag_attr (blk, tagend, "src");
+
+          if (src)
+            {
+              char *abs = resolve_ref (src, base);
+
+              sbuf_adds (&clean, "<p>[nested frame: <a href=\"");
+              sbuf_adds (&clean, abs ? abs : src);
+              sbuf_adds (&clean, "\">");
+              sbuf_adds (&clean, abs ? abs : src);
+              sbuf_adds (&clean, "</a>]</p>");
+              if (abs)
+                free (abs);
+              free (src);
+            }
+        }
+      t = ci_find (p, closer);
+      if (t && t < end)
+        {
+          p = strchr (t, '>');
+          p = p ? p + 1 : end;
+        }
+    }
+  sbuf_add (&clean, p, (p < end) ? end - p : 0);
+
+  if (clean.buf)
+    {
+      rewrite_urls (out, clean.buf, base);
+      free (clean.buf);
+    }
+}
+
+/* fetch a framed document through doit() with the fetch-state
+   globals saved, so the sub-fetch cannot redirect the window, turn
+   a form POST into one against the frame, or repaint the padlock */
+static char *fetch_iframe_doc (char *absurl, char **texthead,
+                               char **base_out)
+{
+  extern char *use_this_url_instead;
+  char *save_redirect, *save_lastmod;
+  int save_dopost, save_sectype;
+  char *txt;
+
+  save_redirect = use_this_url_instead;
+  use_this_url_instead = NULL;
+  save_dopost = do_post;
+  do_post = 0;
+  save_sectype = securityType;
+  save_lastmod = HTTP_last_modified;
+  HTTP_last_modified = NULL;
+
+  iframe_depth++;
+  txt = doit (absurl, texthead);
+  iframe_depth--;
+
+  /* a redirected frame resolves its links against where it landed */
+  *base_out = strdup (use_this_url_instead ?
+                      use_this_url_instead : absurl);
+
+  use_this_url_instead = save_redirect;
+  do_post = save_dopost;
+  securityType = save_sectype;
+  if (HTTP_last_modified)
+    free (HTTP_last_modified);
+  HTTP_last_modified = save_lastmod;
+
+  return txt;
+}
+
+static char *expand_iframes (char *txt, char *base, char **texthead)
+{
+  struct str_buf out;
+  char *p = txt;
+  int count = 0;
+
+  if (!ci_find (txt, "<iframe"))
+    return txt;
+
+  memset (&out, 0, sizeof (out));
+  while (count < IFRAME_MAX)
+    {
+      char *f = ci_find (p, "<iframe");
+      char *tagend, *after, *close;
+      char *src, *abs;
+      int self_closed;
+
+      if (!f)
+        break;
+      if (!isspace ((unsigned char)f[7]) && f[7] != '>' && f[7] != '/')
+        {
+          /* some other tag that merely starts with "iframe" */
+          sbuf_add (&out, p, (f - p) + 7);
+          p = f + 7;
+          continue;
+        }
+      tagend = strchr (f, '>');
+      if (!tagend)
+        break;
+      sbuf_add (&out, p, f - p);
+
+      self_closed = (tagend > f && tagend[-1] == '/');
+      after = tagend + 1;
+      if (!self_closed)
+        {
+          close = ci_find (tagend + 1, "</iframe");
+          if (close)
+            {
+              char *cgt = strchr (close, '>');
+
+              after = cgt ? cgt + 1 : close + strlen (close);
+            }
+        }
+
+      src = tag_attr (f, tagend, "src");
+      abs = NULL;
+      if (src)
+        {
+          if (has_scheme (src))
+            abs = strdup (src);
+          else
+            abs = HTParse (src, base, PARSE_ALL);
+          if (abs && my_strncasecmp (abs, "http:", 5) &&
+              my_strncasecmp (abs, "https:", 6) &&
+              my_strncasecmp (abs, "file:", 5))
+            {
+              free (abs);
+              abs = NULL;
+            }
+          /* a remote page must not pull in local files */
+          if (abs && !my_strncasecmp (abs, "file:", 5) &&
+              my_strncasecmp (base, "file:", 5))
+            {
+              free (abs);
+              abs = NULL;
+            }
+          free (src);
+        }
+
+      if (abs)
+        {
+          char *subhead = NULL, *subbase = NULL;
+          char *subtxt = fetch_iframe_doc (abs, &subhead, &subbase);
+
+          if (interrupted)
+            {
+              /* user hit stop: give up on expansion entirely */
+              if (subhead)
+                free (subhead);
+              if (subbase)
+                free (subbase);
+              free (abs);
+              if (out.buf)
+                free (out.buf);
+              return txt;
+            }
+          if (subtxt && strlen (subtxt) <= IFRAME_MAX_BYTES &&
+              strncmp (subtxt, "<H1>ERROR</H1>", 14) != 0)
+            {
+              sbuf_adds (&out, "<hr><address>frame: <a href=\"");
+              sbuf_adds (&out, abs);
+              sbuf_adds (&out, "\">");
+              sbuf_adds (&out, abs);
+              sbuf_adds (&out, "</a></address>\n");
+              splice_subdoc (&out, subtxt, subbase);
+              sbuf_adds (&out, "\n<hr>\n");
+            }
+          else
+            {
+              /* unreadable or oversized: leave a link */
+              sbuf_adds (&out, "<p>[inline frame: <a href=\"");
+              sbuf_adds (&out, abs);
+              sbuf_adds (&out, "\">");
+              sbuf_adds (&out, abs);
+              sbuf_adds (&out, "</a>]</p>\n");
+            }
+          if (subhead)
+            free (subhead);
+          if (subbase)
+            free (subbase);
+          free (abs);
+        }
+      else
+        {
+          /* no usable src: keep the block, fallback content shows */
+          sbuf_add (&out, f, after - f);
+        }
+
+      p = after;
+      count++;
+    }
+  sbuf_adds (&out, p);
+
+  free (*texthead);
+  *texthead = out.buf;
+  return out.buf;
+}
+
+
+/****************************************************************************
  * name:    doit (PRIVATE)
  * purpose: Given a URL, go fetch information.
  * inputs:
@@ -521,6 +1002,25 @@ static char *doit (char *url, char **texthead)
         }
       else
         *texthead = NULL;
+
+      /* pull framed documents inline (top-level fetches only) */
+      if (iframe_depth == 0 && txt && *texthead)
+        {
+          char *expanded = expand_iframes (txt,
+                use_this_url_instead ? use_this_url_instead : url,
+                texthead);
+
+          if (expanded != txt)
+            {
+              txt = expanded;
+              if (HTMainText)
+                {
+                  HTMainText->htmlSrc = txt;
+                  HTMainText->htmlSrcHead = *texthead;
+                  HTMainText->srclen = strlen (txt);
+                }
+            }
+        }
       return txt;
     }
   else if (rv == -1)
