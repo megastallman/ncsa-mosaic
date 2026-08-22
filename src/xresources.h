@@ -64,8 +64,11 @@
 static XtResource resources[] = {
 
   /* default font choice from Options menu choices */
+  /* Noto gives full Unicode coverage; quietly falls back to Times
+     when the Noto core fonts are not in the X font path (see
+     install-noto-fonts.sh). */
   { "defaultFontChoice", "DefaultFontChoice", XtRString, sizeof (char *),
-    offset (default_font_choice), XtRString, "TimesRegular" },
+    offset (default_font_choice), XtRString, "NotoSerifRegular" },
   { "kiosk", "Kiosk", XtRBoolean, sizeof (Boolean),
       offset (kiosk), XtRString, "False" },
   { "kioskPrint", "KioskPrint", XtRBoolean, sizeof (Boolean),
