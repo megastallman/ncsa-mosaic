@@ -1373,6 +1373,27 @@ XmxCallback (submit_form_callback)
         }
     }
 
+  /* Send the current document as the Referer, exactly as link
+     clicks do: some servers refuse form submissions without it. */
+  {
+    static char *form_referer = NULL;
+
+    if (form_referer != NULL)
+      {
+        free (form_referer);
+        form_referer = NULL;
+      }
+    if (win->current_node && win->current_node->url &&
+        (!my_strncasecmp (win->current_node->url, "http://", 7) ||
+         !my_strncasecmp (win->current_node->url, "https://", 8)))
+      {
+        form_referer = strdup (win->current_node->url);
+        HTReferer = form_referer;
+      }
+    else
+      HTReferer = NULL;
+  }
+
   if (do_post_urlencoded)
     {
 	if (!my_strcasecmp(method,"cciPOST"))
