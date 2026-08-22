@@ -115,7 +115,14 @@ unsigned char map_table[256]={
 int ucs2utf8(unsigned int ucs,char code[4])
 {
           unsigned int x,y,z;
-	  
+
+	  /* a non-breaking space renders as a glued nothing in the
+	     core fonts; treat it as an ordinary space */
+	  if (ucs == 160)
+	    {
+	      ucs = ' ';
+	    }
+
           if (ucs<128)
 	    {
 	      code[0]=(char)ucs;
@@ -999,6 +1006,265 @@ static char *atts[]={"text","bgcolor","alink","vlink","link",NULL};
  * The old list is passed in so it can be freed, and in the future we
  * may want to add code to append to the old list.
  */
+/*
+ * Minimal display:none support -- enough for the common pattern of
+ * pages shipping both a desktop and a mobile header and hiding one
+ * with a stylesheet rule (media queries then unhide it on phones;
+ * with no media query support the top-level rule is the right
+ * default).  Selectors come from inline <style> blocks: .class and
+ * #id names of rules whose body says display:none, ignoring
+ * everything inside @media blocks.  Inline style="display:none"
+ * attributes are honored too.
+ */
+
+#define MAX_HIDDEN_SEL 32
+static char *HiddenSel[MAX_HIDDEN_SEL];
+static int HiddenSelCnt = 0;
+
+static void
+ResetHiddenSelectors()
+{
+	int i;
+
+	for (i = 0; i < HiddenSelCnt; i++)
+	{
+		free(HiddenSel[i]);
+	}
+	HiddenSelCnt = 0;
+}
+
+/* is there a "display : none" inside [s,e)? */
+static int
+DisplayNoneIn(s, e)
+	char *s, *e;
+{
+	char *p, *q;
+
+	for (p = s; (p + 7) < e; p++)
+	{
+		if (!caseless_equal_prefix(p, "display", 7))
+		{
+			continue;
+		}
+		q = p + 7;
+		while ((q < e)&&(isspace((int)*q)))
+		{
+			q++;
+		}
+		if ((q >= e)||(*q != ':'))
+		{
+			continue;
+		}
+		q++;
+		while ((q < e)&&(isspace((int)*q)))
+		{
+			q++;
+		}
+		if (((q + 4) <= e)&&
+			(caseless_equal_prefix(q, "none", 4)))
+		{
+			return(1);
+		}
+	}
+	return(0);
+}
+
+static void
+ScanStyleForHidden(s, e)
+	char *s, *e;
+{
+	char *p;
+	char *selstart;
+
+	p = s;
+	selstart = p;
+	while (p < e)
+	{
+		if ((*p == '@')&&((p + 6) < e)&&
+			(caseless_equal_prefix(p, "@media", 6)))
+		{
+			int depth;
+
+			/* skip the whole conditional block */
+			while ((p < e)&&(*p != '{'))
+			{
+				p++;
+			}
+			depth = 0;
+			for (; p < e; p++)
+			{
+				if (*p == '{')
+				{
+					depth++;
+				}
+				else if (*p == '}')
+				{
+					depth--;
+					if (depth <= 0)
+					{
+						p++;
+						break;
+					}
+				}
+			}
+			selstart = p;
+		}
+		else if (*p == '{')
+		{
+			char *body = p + 1;
+			char *bend = body;
+			char *q;
+
+			while ((bend < e)&&(*bend != '}'))
+			{
+				bend++;
+			}
+			if (DisplayNoneIn(body, bend))
+			{
+				/* record each .class / #id selector */
+				for (q = selstart; q < p; q++)
+				{
+					char *ns, *nend, *name;
+
+					if ((*q != '.')&&(*q != '#'))
+					{
+						continue;
+					}
+					ns = q + 1;
+					nend = ns;
+					while ((nend < p)&&
+						((isalnum((int)*nend))||
+						 (*nend == '-')||
+						 (*nend == '_')))
+					{
+						nend++;
+					}
+					if ((nend > ns)&&
+					    (HiddenSelCnt < MAX_HIDDEN_SEL))
+					{
+						name = (char *)malloc(
+							nend - ns + 1);
+						strncpy(name, ns, nend - ns);
+						name[nend - ns] = '\0';
+						HiddenSel[HiddenSelCnt++] =
+							name;
+					}
+					q = nend - 1;
+				}
+			}
+			p = (bend < e) ? (bend + 1) : e;
+			selstart = p;
+		}
+		else if (*p == '}')
+		{
+			p++;
+			selstart = p;
+		}
+		else
+		{
+			p++;
+		}
+	}
+}
+
+static int
+NameIsHidden(name)
+	char *name;
+{
+	int i;
+
+	for (i = 0; i < HiddenSelCnt; i++)
+	{
+		if (caseless_equal(name, HiddenSel[i]))
+		{
+			return(1);
+		}
+	}
+	return(0);
+}
+
+/* does this start tag ask to be hidden? */
+static int
+MarkIsHidden(mark)
+	struct mark_up *mark;
+{
+	char tagname[24];
+	char *val;
+	int i;
+	int hidden;
+
+	if (mark->start == NULL)
+	{
+		return(0);
+	}
+	for (i = 0; (i < 23)&&(mark->start[i] != '\0')&&
+		(mark->start[i] != '/')&&
+		(!isspace((int)mark->start[i])); i++)
+	{
+		tagname[i] = mark->start[i];
+	}
+	tagname[i] = '\0';
+
+	hidden = 0;
+	val = ParseMarkTag(mark->start, tagname, "STYLE");
+	if (val != NULL)
+	{
+		if (DisplayNoneIn(val, (char *)(val + strlen(val))))
+		{
+			hidden = 1;
+		}
+		free(val);
+	}
+	if ((!hidden)&&(HiddenSelCnt > 0))
+	{
+		val = ParseMarkTag(mark->start, tagname, "CLASS");
+		if (val != NULL)
+		{
+			char *p = val;
+			char *ws;
+			char save;
+
+			while ((*p != '\0')&&(!hidden))
+			{
+				while ((*p != '\0')&&(isspace((int)*p)))
+				{
+					p++;
+				}
+				ws = p;
+				while ((*p != '\0')&&(!isspace((int)*p)))
+				{
+					p++;
+				}
+				if (p > ws)
+				{
+					save = *p;
+					*p = '\0';
+					if (NameIsHidden(ws))
+					{
+						hidden = 1;
+					}
+					*p = save;
+				}
+			}
+			free(val);
+		}
+	}
+	if ((!hidden)&&(HiddenSelCnt > 0))
+	{
+		val = ParseMarkTag(mark->start, tagname, "ID");
+		if (val != NULL)
+		{
+			if (NameIsHidden(val))
+			{
+				hidden = 1;
+			}
+			free(val);
+		}
+	}
+	return(hidden);
+}
+
+
 struct mark_up *
 HTMLParse(old_list, str, hw)
 	struct mark_up *old_list;
@@ -1006,6 +1272,7 @@ HTMLParse(old_list, str, hw)
         void *hw;
 {
 	int preformat;
+	int hide_depth, hide_type, discard;
 	char *start, *end;
 	char *text, *tptr;
 	struct mark_up *mark;
@@ -1024,6 +1291,9 @@ HTMLParse(old_list, str, hw)
 #endif
 
 	preformat = 0;
+	hide_depth = 0;
+	hide_type = M_UNKNOWN;
+	ResetHiddenSelectors();
 
 	/*
 	 * Free up the previous Object List if one exists
@@ -1126,7 +1396,17 @@ HTMLParse(old_list, str, hw)
 			mark->text = text;
 			mark->end = NULL;
 			mark->next = NULL;
-			current = AddObj(&list, current, mark, preformat);
+			if (hide_depth > 0)
+			{
+				/* text inside a display:none element */
+				free(text);
+				free((char *)mark);
+			}
+			else
+			{
+				current = AddObj(&list, current, mark,
+					preformat);
+			}
 		}
 		start = end;
 
@@ -1184,8 +1464,52 @@ HTMLParse(old_list, str, hw)
 			}
 		    }
 
-		    mark->next = NULL;
-                    current = AddObj(&list, current, mark, preformat);
+		    discard = 0;
+		    if (hide_depth > 0)
+		    {
+			/* inside a display:none element: swallow marks,
+			   tracking nesting of the hidden element's type */
+			if (mark->type == hide_type)
+			{
+				if (mark->is_end)
+				{
+					hide_depth--;
+				}
+				else
+				{
+					hide_depth++;
+				}
+			}
+			discard = 1;
+		    }
+		    else if ((!mark->is_end)&&(MarkIsHidden(mark)))
+		    {
+			if ((mark->start != NULL)&&(mark->start[0] != '\0')&&
+			    (mark->start[strlen(mark->start) - 1] == '/'))
+			{
+				/* self-closed: nothing more to swallow */
+			}
+			else if ((mark->type == M_IMAGE)||
+				(mark->type == M_INPUT)||
+				(mark->type == M_LINEBREAK)||
+				(mark->type == M_HRULE)||
+				(mark->type == M_META))
+			{
+				/* void elements have no end tag */
+			}
+			else
+			{
+				hide_type = mark->type;
+				hide_depth = 1;
+			}
+			discard = 1;
+		    }
+
+		    if (!discard)
+		    {
+			mark->next = NULL;
+			current = AddObj(&list, current, mark, preformat);
+		    }
 
 		}
 
@@ -1240,7 +1564,14 @@ HTMLParse(old_list, str, hw)
 
 			if (mark->start[strlen(mark->start) - 1] != '/')
 			{
-				start = SkipRawContent(start, name);
+				char *cend = SkipRawContent(start, name);
+
+				if (caseless_equal(name, "style"))
+				{
+					/* collect display:none selectors */
+					ScanStyleForHidden(start, cend);
+				}
+				start = cend;
 			}
 		}
 		/*
