@@ -481,7 +481,7 @@ struct cell_word {
 };
 
 static char *TableCellFlow(hw, eptr, field, x, y, width, height,
-			mode, ex, ey, retheight)
+			mode, ex, ey, retheight, retwidth, retminword)
 HTMLWidget hw;
 struct ele_rec *eptr;
 TableField *field;
@@ -490,17 +490,26 @@ int width, height;
 int mode;
 int ex, ey;
 int *retheight;
+int *retwidth;		/* widest flowed line (or NULL) */
+int *retminword;	/* widest single word (or NULL) */
 {
 struct cell_word *words;
 int nwords, wcap;
 int *linew;
 int i, j, r;
-int spaceWidth, lineHeight, baseLine;
-int cx, line, nlines, totalh, starty;
+int lineHeight, baseLine;
+int cx, line, nlines, totalh, starty, maxlinew;
 char *result;
+XFontStruct *rfont;
 
 	if (retheight != (int *) 0) {
 		*retheight = 0;
+		}
+	if (retwidth != (int *) 0) {
+		*retwidth = 0;
+		}
+	if (retminword != (int *) 0) {
+		*retminword = 0;
 		}
 	if ((field->run_cnt <= 0)||(field->font == (XFontStruct *) 0)) {
 		return((char *) 0);
@@ -509,7 +518,7 @@ char *result;
 		width = 16;
 		}
 
-	/* split every run into words */
+	/* split every run into words, measured with the run's font */
 	words = (struct cell_word *) 0;
 	nwords = 0;
 	wcap = 0;
@@ -517,6 +526,8 @@ char *result;
 		char *p = field->runs[r].text;
 		char *ws, *we;
 
+		rfont = (field->runs[r].font != (XFontStruct *) 0) ?
+			field->runs[r].font : field->font;
 		while ((p != (char *) 0)&&(*p != '\0')) {
 			GetWord(p, &ws, &we);
 			if (we == ws) {
@@ -530,9 +541,13 @@ char *result;
 				}
 			words[nwords].p = ws;
 			words[nwords].len = (int)(we - ws);
-			words[nwords].width = XTextWidth(field->font,
+			words[nwords].width = XTextWidth(rfont,
 				ws, words[nwords].len);
 			words[nwords].run = r;
+			if ((retminword != (int *) 0)&&
+			    (words[nwords].width > *retminword)) {
+				*retminword = words[nwords].width;
+				}
 			nwords++;
 			p = we;
 			}
@@ -544,27 +559,51 @@ char *result;
 		return((char *) 0);
 		}
 
-	spaceWidth = XTextWidth(field->font, " ", 1);
-	lineHeight = FONTHEIGHT(field->font);
-	baseLine = field->font->max_bounds.ascent;
+	/* line metrics: mixed fonts share a baseline */
+	lineHeight = 0;
+	baseLine = 0;
+	for (r = 0; r < field->run_cnt; r++) {
+		rfont = (field->runs[r].font != (XFontStruct *) 0) ?
+			field->runs[r].font : field->font;
+		if (rfont->max_bounds.ascent > baseLine) {
+			baseLine = rfont->max_bounds.ascent;
+			}
+		if (FONTHEIGHT(rfont) > lineHeight) {
+			lineHeight = FONTHEIGHT(rfont);
+			}
+		}
 
-	/* greedy line breaking */
+	/* greedy line breaking; inter-word gaps use the incoming
+	   word's font so joined segments measure exactly */
 	cx = 0;
 	line = 0;
+	maxlinew = 0;
 	for (i = 0; i < nwords; i++) {
+		int sp;
+
+		rfont = (field->runs[words[i].run].font !=
+				(XFontStruct *) 0) ?
+			field->runs[words[i].run].font : field->font;
+		sp = XTextWidth(rfont, " ", 1);
 		if ((cx > 0)&&
-		    ((cx + spaceWidth + words[i].width) > width)) {
+		    ((cx + sp + words[i].width) > width)) {
 			line++;
 			cx = 0;
 			}
 		words[i].ln = line;
-		words[i].lx = cx ? (cx + spaceWidth) : 0;
+		words[i].lx = cx ? (cx + sp) : 0;
 		cx = words[i].lx + words[i].width;
+		if (cx > maxlinew) {
+			maxlinew = cx;
+			}
 		}
 	nlines = line + 1;
 	totalh = nlines * lineHeight;
 	if (retheight != (int *) 0) {
 		*retheight = totalh;
+		}
+	if (retwidth != (int *) 0) {
+		*retwidth = maxlinew;
 		}
 	if (mode == CELLFLOW_MEASURE) {
 		free((char *)words);
@@ -645,20 +684,26 @@ char *result;
 				}
 			seg[sl] = '\0';
 
+			rfont = (run->font != (XFontStruct *) 0) ?
+				run->font : field->font;
 			XSetForeground(XtDisplay(hw), hw->html.drawGC,
 				(run->href != (char *) 0) ?
 				hw->html.anchor_fg : eptr->fg);
 			XSetBackground(XtDisplay(hw), hw->html.drawGC,
 				eptr->bg);
 			XSetFont(XtDisplay(hw), hw->html.drawGC,
-				field->font->fid);
+				rfont->fid);
 			ttd = XmStringCreateLocalized(seg);
-			tftd = XmFontListCreate(field->font,
+			tftd = XmFontListCreate(rfont,
 				XmSTRING_DEFAULT_CHARSET);
 			XmStringDraw(XtDisplay(hw),
 				XtWindow(hw->html.view),
 				tftd, ttd, hw->html.drawGC,
-				sx, sy, /* XmStringDraw wants the TOP */
+				sx,
+				/* top y such that mixed fonts share
+				   the line's baseline */
+				sy + (baseLine -
+					rfont->max_bounds.ascent),
 				XmStringWidth(tftd, ttd),
 				XmALIGNMENT_BEGINNING,
 				XmSTRING_DIRECTION_L_TO_R, NULL);
@@ -712,26 +757,18 @@ int accumulateColWidth;
 		field = &(t->table[y * t->numColumns + x]);
 		field->minWidth = 0;
 		if (field->type == F_TEXT) {
-			char *wp, *ws, *we;
-			int ww;
+			int th, tw, tm;
 
-			field->maxWidth = XTextWidth(field->font,
-					field->text,strlen(field->text));
-			field->minHeight = FONTHEIGHT(field->font);
-			/* the narrowest this cell can wrap to is its
-			   widest single word */
-			wp = field->text;
-			while (*wp) {
-				GetWord(wp,&ws,&we);
-				if (we > ws) {
-					ww = XTextWidth(field->font, ws,
-							(int)(we - ws));
-					if (ww > field->minWidth) {
-						field->minWidth = ww;
-						}
-					}
-				wp = we;
-				}
+			/* the flow at unlimited width gives the one-line
+			   width (max), the widest single word (min, the
+			   narrowest the cell can wrap to) and the line
+			   height, all with per-run fonts */
+			TableCellFlow(hw, (struct ele_rec *) 0, field,
+				0, 0, (1 << 28), 0, CELLFLOW_MEASURE,
+				0, 0, &th, &tw, &tm);
+			field->maxWidth = tw;
+			field->minWidth = tm;
+			field->minHeight = th;
 			}
 		else if (field->type == F_TABLE) {
 			/* a nested table was laid out by the recursive
@@ -897,7 +934,8 @@ int accumulateColWidth;
 						field, 0, 0,
 						accumulateColWidth,
 						0, CELLFLOW_MEASURE,
-						0, 0, &th);
+						0, 0, &th,
+						(int *) 0, (int *) 0);
 					field->rowHeight = th +
 						2 * FIELD_BORDER_SPACE;
 					}
@@ -1181,8 +1219,20 @@ int len;
    literal '&'s). */
 
 	char *cur_href = (char *) 0;	/* anchor currently open */
+	XFontStruct *fstack[8];		/* nested inline font markup */
+	int fdepth = 0;
+	XFontStruct *base_font;
+	XFontStruct *cur_font;
 
-	field->font = hw->html.plain_font; /* default font */
+	/* cells read like the document: the regular proportional font,
+	   bold for headers (the old code used the plain/mono font) */
+	base_font = field->header ?
+		hw->html.bold_font : hw->html.font;
+	if (base_font == (XFontStruct *) 0) {
+		base_font = hw->html.plain_font;
+		}
+	field->font = base_font;	/* fallback for run-less content */
+	cur_font = base_font;
 	len = 0;
 	m = mptr->next;
 	while(m && (m->type != M_TABLE) && (m->type != M_TABLE_ROW) &&
@@ -1214,13 +1264,14 @@ int len;
 					len += rl + 1;
 					}
 
-				/* record the run with the anchor it sits
-				   in; merge with the last run when the
-				   anchor is the same */
+				/* record the run with the anchor and font
+				   it sits in; merge with the last run when
+				   both match */
 				lr = (field->run_cnt > 0) ?
 					&field->runs[field->run_cnt-1] :
 					(CellRun *) 0;
 				if ((lr != (CellRun *) 0)&&
+				    (lr->font == cur_font)&&
 				    (((lr->href == (char *) 0)&&
 				      (cur_href == (char *) 0))||
 				     ((lr->href != (char *) 0)&&
@@ -1240,29 +1291,59 @@ int len;
 					lr->text = strdup(m->text);
 					lr->href = (cur_href != (char *) 0) ?
 						strdup(cur_href) : (char *) 0;
+					lr->font = cur_font;
 					field->run_cnt++;
 					}
 				}
 			}
-		else if ((m->is_end)&&(m->type == M_ANCHOR)) {
-			if (cur_href != (char *) 0) {
-				free(cur_href);
-				cur_href = (char *) 0;
-				}
+		else if (m->is_end) {
+		    switch(m->type) {
+			case M_ANCHOR:
+					if (cur_href != (char *) 0) {
+						free(cur_href);
+						cur_href = (char *) 0;
+						}
+					break;
+			case M_ITALIC:
+			case M_VARIABLE:
+			case M_EMPHASIZED:
+			case M_BOLD:
+			case M_STRONG:
+			case M_FIXED:
+			case M_CODE:
+			case M_SAMPLE:
+			case M_KEYBOARD:
+					/* pop the inline font */
+					if (fdepth > 0) {
+						cur_font = fstack[--fdepth];
+						}
+					else {
+						cur_font = base_font;
+						}
+					break;
 			}
-		else if (!m->is_end) {
+		    }
+		else {
 		    switch(m->type) {
 			case M_ITALIC:
 			case M_VARIABLE:
 			case M_EMPHASIZED:
-					field->font = hw->html.italic_font;
+					if (fdepth < 8) {
+						fstack[fdepth++] = cur_font;
+						}
+					cur_font = hw->html.italic_font;
 					break;
 			case M_BOLD:
 			case M_STRONG:
-					field->font = hw->html.bold_font;
+					if (fdepth < 8) {
+						fstack[fdepth++] = cur_font;
+						}
+					cur_font = hw->html.bold_font;
 					break;
 			case M_ANCHOR:
-					field->font = hw->html.bold_font;
+					/* links get their color and
+					   underline per run; no font
+					   change, like the main flow */
 					if (cur_href != (char *) 0) {
 						free(cur_href);
 						}
@@ -1325,16 +1406,16 @@ int len;
 			case M_CODE:
 			case M_SAMPLE:
 			case M_KEYBOARD:
-					field->font = hw->html.fixed_font;
+					if (fdepth < 8) {
+						fstack[fdepth++] = cur_font;
+						}
+					cur_font = hw->html.fixed_font;
 					break;
 			}
 		    }
 		m = m->next;
 		}
 
-	if (field->header) {
-		field->font = hw->html.plainbold_font;
-		}
 	if (field->winfo_cnt > 0) {
 		/* widgets win over text and images: a half-lost label
 		   is cosmetic, an invisible form field is unusable */
@@ -1788,7 +1869,8 @@ int yy;
 		int th;
 
 		TableCellFlow(hw, eptr, field, x, y, width, height,
-			CELLFLOW_DRAW, 0, 0, &th);
+			CELLFLOW_DRAW, 0, 0, &th,
+			(int *) 0, (int *) 0);
 	}
 
 	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
@@ -2054,7 +2136,8 @@ int expandedWidth,expandedHeight;
 							2*FIELD_BORDER_SPACE,
 						expandedHeight -
 							2*FIELD_BORDER_SPACE,
-						CELLFLOW_HIT, ex, ey, &th));
+						CELLFLOW_HIT, ex, ey, &th,
+						(int *) 0, (int *) 0));
 					}
 				return(field->href);
 				}

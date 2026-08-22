@@ -246,10 +246,11 @@ typedef struct wid_rec {
 
 typedef enum { F_NONE, F_TEXT, F_IMAGE, F_WIDGET, F_TABLE} FieldType;
 
-/* one stretch of cell text sharing an anchor (or lack of one) */
+/* one stretch of cell text sharing an anchor and a font */
 typedef struct cell_run {
 	char	*text;		/* whitespace-flattened text */
 	char	*href;		/* the anchor it sits in, or NULL */
+	XFontStruct *font;	/* the font its inline markup asked for */
 } CellRun;
 
 typedef struct table_field {
