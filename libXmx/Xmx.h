@@ -340,6 +340,9 @@ extern Widget XmxMakeFormAndFiveButtons (Widget, XtCallbackProc, String,
 extern int XmxModalYesOrNo (Widget parent, XtAppContext app,
                             char *questionstr, char *yesstr,
                             char *nostr);
+extern int XmxModalThreeChoice (Widget parent, XtAppContext app,
+                                char *questionstr, char *str1,
+                                char *str2, char *str3);
 extern char *XmxModalPromptForString (Widget parent, XtAppContext app,
                                       char *questionstr, char *yesstr,
                                       char *nostr);

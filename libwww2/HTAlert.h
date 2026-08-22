@@ -51,6 +51,16 @@ extern void HTClearActiveIcon NOPARAMS;
 **              otherwise.
 */
 extern BOOL HTConfirm PARAMS ((WWW_CONST char * Msg));
+
+/*      Ask the user about a server certificate that failed verification.
+**
+**      On exit,
+**              returns 1 to accept the certificate for this host,
+**                      2 to accept all unverified certificates
+**                        for the rest of the session,
+**                      0 to cancel the transfer.
+*/
+extern int HTPromptCertAccept PARAMS ((WWW_CONST char * Msg));
 /*
 
     */

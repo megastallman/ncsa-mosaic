@@ -1684,6 +1684,75 @@ int XmxModalYesOrNo (Widget parent, XtAppContext app,
   return answer;
 }
 
+static void _XmxThreeChoiceResponse (Widget w, int *answer,
+                                     XmAnyCallbackStruct *cbs)
+{
+  if (cbs->reason == XmCR_OK)
+    *answer = 1;
+  else if (cbs->reason == XmCR_CANCEL)
+    *answer = 2;
+  else if (cbs->reason == XmCR_HELP)
+    *answer = 0;
+}
+
+/* Modal dialog with three buttons; returns 1 for the first choice,
+   2 for the second and 0 for the third. */
+int XmxModalThreeChoice (Widget parent, XtAppContext app,
+                         char *questionstr, char *str1, char *str2,
+                         char *str3)
+{
+  Widget dialog;
+  XmString question, choice1, choice2, choice3, title;
+  int answer = -1;
+
+  question = XmStringCreateLtoR (questionstr, XmSTRING_DEFAULT_CHARSET);
+  choice1 = XmStringCreateLtoR (str1, XmSTRING_DEFAULT_CHARSET);
+  choice2 = XmStringCreateLtoR (str2, XmSTRING_DEFAULT_CHARSET);
+  choice3 = XmStringCreateLtoR (str3, XmSTRING_DEFAULT_CHARSET);
+  title = XmStringCreateLtoR ("Prompt", XmSTRING_DEFAULT_CHARSET);
+
+  XmxSetArg (XmNdialogTitle, (XtArgVal)title);
+  XmxSetArg (XmNdialogStyle, (XtArgVal)XmDIALOG_FULL_APPLICATION_MODAL);
+  XmxSetArg (XmNmessageString, (XtArgVal)question);
+  XmxSetArg (XmNokLabelString, (XtArgVal)choice1);
+  XmxSetArg (XmNcancelLabelString, (XtArgVal)choice2);
+  XmxSetArg (XmNhelpLabelString, (XtArgVal)choice3);
+  XmxSetArg (XmNsymbolPixmap, (XtArgVal)dialogQuestion);
+
+  dialog = XmCreateQuestionDialog (parent, "three_choice_dialog",
+                                   Xmx_wargs, Xmx_n);
+  Xmx_n = 0;
+
+  XtAddCallback (dialog, XmNokCallback,
+                 (XtCallbackProc)_XmxThreeChoiceResponse, &answer);
+  XtAddCallback (dialog, XmNcancelCallback,
+                 (XtCallbackProc)_XmxThreeChoiceResponse, &answer);
+  XtAddCallback (dialog, XmNhelpCallback,
+                 (XtCallbackProc)_XmxThreeChoiceResponse, &answer);
+
+  XtManageChild (dialog);
+
+  while (answer == -1)
+    {
+      XtAppProcessEvent (app, XtIMAll);
+      XSync (XtDisplay (dialog), 0);
+    }
+
+  XtUnmanageChild (dialog);
+  XSync (XtDisplay (dialog), 0);
+  XmUpdateDisplay (dialog);
+
+  XmStringFree (question);
+  XmStringFree (choice1);
+  XmStringFree (choice2);
+  XmStringFree (choice3);
+  XmStringFree (title);
+
+  XtDestroyWidget (dialog);
+
+  return answer;
+}
+
 /* ------------------------------------------------------------------------ */
 
 #define XMX_NO_ANSWER "-*-no answer, dammit, but Xmx rules, yo yo yo-*-"

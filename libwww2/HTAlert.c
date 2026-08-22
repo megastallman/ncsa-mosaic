@@ -56,6 +56,13 @@ PUBLIC void HTDoneWithIcon NOARGS
   return;
 }
 
+PUBLIC int HTPromptCertAccept ARGS1(WWW_CONST char *, Msg)
+{
+  extern int prompt_for_cert_accept (char *);
+
+  return prompt_for_cert_accept ((char *)Msg);
+}
+
 PUBLIC BOOL HTConfirm ARGS1(WWW_CONST char *, Msg)
 {
   extern int prompt_for_yes_or_no (char *);

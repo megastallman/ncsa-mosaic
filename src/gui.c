@@ -1101,7 +1101,8 @@ static XmxCallback (anchor_cb)
     }
 
   /*SWP*/
-  if (!my_strncasecmp(win->current_node->url, "http://", 7))
+  if (!my_strncasecmp(win->current_node->url, "http://", 7) ||
+      !my_strncasecmp(win->current_node->url, "https://", 8))
     {
       /* what if hostname is a partial local? */
       referer = strdup (win->current_node->url);

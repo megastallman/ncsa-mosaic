@@ -78,6 +78,11 @@ extern char *proxy_host_fix;  /* for the Host: header */
 extern BOOL using_proxy;      /* are we using an HTTP proxy gateway? */
 PUBLIC BOOL reloading = NO;   /* did someone say, "RELOAD!?!?!" swp */
 
+/* The globals above are shared with the whole application and stay in
+   all builds; the HTTP engine below is replaced by HTTPcurl.c when
+   compiling with -DUSE_LIBCURL. */
+#ifndef USE_LIBCURL
+
 /*		Load Document from HTTP Server			HTLoadHTTP()
 **		==============================
 **
@@ -1054,6 +1059,8 @@ PUBLIC int HTLoadHTTP ARGS4 (
 */
 
 PUBLIC HTProtocol HTTP = { "http", HTLoadHTTP, 0 };
+
+#endif /* not USE_LIBCURL */
 
 
 

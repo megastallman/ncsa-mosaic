@@ -1145,6 +1145,16 @@ int prompt_for_yes_or_no (char *questionstr)
                           questionstr, "Yes", "No");
 }
 
+/* SSL certificate verification failed; 1 = accept for this host,
+   2 = accept all unverified certificates this session, 0 = cancel. */
+int prompt_for_cert_accept (char *questionstr)
+{
+
+  return XmxModalThreeChoice (current_win->base, app_context,
+                              questionstr, "Accept Certificate",
+                              "Accept All", "Cancel");
+}
+
 char *mo_get_html_return (char **texthead)
 {
   char *txt = hack_htmlsrc ();

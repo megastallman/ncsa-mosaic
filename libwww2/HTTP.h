@@ -10,4 +10,8 @@
 
 extern HTProtocol HTTP;
 
+#ifdef USE_LIBCURL
+extern HTProtocol HTTPS;
+#endif
+
 #endif /* HTTP_H */

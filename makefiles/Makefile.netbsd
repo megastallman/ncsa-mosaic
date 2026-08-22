@@ -40,7 +40,7 @@ knrflag =
 #### For Convex whatever, do -DCONVEX
 #### For SCO ODT 3.0, do -DSCO -DSVR4 -DMOTIF1_2
 #### For Motorola SVR4, do -DSVR4 -DMOTOROLA -DMOTIF1_2
-sysconfigflags = -DMOTIF1_2 -DLINUX
+sysconfigflags = -DMOTIF1_2 -DLINUX -DUSE_LIBCURL
 
 #### System libraries.
 # syslibs = -lPW -lsun -lmalloc
@@ -61,7 +61,7 @@ sysconfigflags = -DMOTIF1_2 -DLINUX
 #### For Motorola SVR4:
 # syslibs = -lnsl -lsocket -lgen
 
-syslibs = -lc
+syslibs = -lcurl -lc
 
 #### X include file locations -- if your platform puts the X include
 #### files in a strange place, set this variable appropriately.  Else
@@ -233,9 +233,14 @@ CWARNINGS = -Wall \
 	-Wno-parentheses \
 	-Wno-switch -Wno-switch-enum \
 	-Wno-char-subscripts \
-	-Wno-unused-result
+	-Wno-unused-result \
+	-Wno-error=implicit-int \
+	-Wno-error=implicit-function-declaration \
+	-Wno-error=int-conversion \
+	-Wno-error=incompatible-pointer-types \
+	-Wno-error=return-mismatch
 
-CFLAGS = -fcommon -g $(sysconfigflags) $(prereleaseflags) $(CWARNINGS) $(customflags) -I/usr/X11R7/include -I/usr/pkg/include
+CFLAGS = -std=gnu11 -fcommon -g $(sysconfigflags) $(prereleaseflags) $(CWARNINGS) $(customflags) -I/usr/X11R7/include -I/usr/pkg/include
 
 # Don't worry about these -- for development purposes only.
 PURIFY = purify
