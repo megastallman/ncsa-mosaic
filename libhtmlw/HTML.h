@@ -277,6 +277,7 @@ typedef struct table_rec {
 	Boolean	borders;
 	char	*caption;
 	int	captionAlignment;
+	int	captionHeight;		/* extra height reserved for it */
 	struct	mark_up *mptr;
 	int	width,height;
 	int	bwidth,bheight;

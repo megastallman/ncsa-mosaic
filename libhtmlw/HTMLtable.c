@@ -1,6 +1,8 @@
 #include "../config.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
 #include <X11/Xlib.h>
 #include "HTMLP.h"
 #include "HTML.h"
@@ -26,6 +28,7 @@ extern int htmlwTrace;
  * return 0 on failure
  */
 static void TableDraw();
+extern Pixmap InfoToImage();
 
 static TableField *NewTableField()
 {
@@ -485,6 +488,12 @@ int accumulateColWidth;
 			field->minWidth = field->table->width;
 			field->minHeight = field->table->height;
 			}
+		else if (field->type == F_IMAGE) {
+			/* an image has fixed dimensions too */
+			field->maxWidth = field->image->width;
+			field->minWidth = field->image->width;
+			field->minHeight = field->image->height;
+			}
 		else {
 			/* non text */
 			field->maxWidth = 0;
@@ -647,23 +656,28 @@ int accumulateColWidth;
 					&(field->formattedText),
 					&(field->numLines));
 
-				if (field->type == F_TABLE) {
-					/* a nested table keeps the size
-					   its own layout pass gave it */
-					field->rowHeight =
-						field->table->height +
-						2 * FIELD_BORDER_SPACE;
-					}
-
-				/* a nested table cannot be squeezed: it
-				   keeps its computed dimensions */
+				/* fixed-size contents (nested tables and
+				   images) cannot be squeezed: they keep
+				   the dimensions layout gave them */
 				if (field->type == F_TABLE) {
 					field->rowHeight = field->table->height
 						+ 2 * FIELD_BORDER_SPACE;
 					if (field->colWidth <
-						field->table->width) {
+						(field->table->width +
+						 2 * FIELD_BORDER_SPACE)) {
 						field->colWidth =
 							field->table->width
+							+ 2 * FIELD_BORDER_SPACE;
+						}
+					}
+				else if (field->type == F_IMAGE) {
+					field->rowHeight = field->image->height
+						+ 2 * FIELD_BORDER_SPACE;
+					if (field->colWidth <
+						(field->image->width +
+						 2 * FIELD_BORDER_SPACE)) {
+						field->colWidth =
+							field->image->width
 							+ 2 * FIELD_BORDER_SPACE;
 						}
 					}
@@ -735,14 +749,23 @@ int accumulateColWidth;
 				maxWidthOfColumn:
 				t->table[y*t->numColumns+x].colWidth;
 			}
-		    /* a nested table cannot shrink: floor the column at
-		       its width, even if that overflows the page */
+		    /* fixed-size contents cannot shrink: floor the column
+		       at their width, even if that overflows the page */
 		    for (y = 0; y < t->numRows; y++) {
+			int fw;
+
 			field = &(t->table[y*t->numColumns+x]);
-			if ((field->type == F_TABLE)&&
-			    (maxWidthOfColumn < (field->table->width +
+			fw = 0;
+			if (field->type == F_TABLE) {
+				fw = field->table->width;
+				}
+			else if (field->type == F_IMAGE) {
+				fw = field->image->width;
+				}
+			if ((fw > 0)&&
+			    (maxWidthOfColumn < (fw +
 						2 * FIELD_BORDER_SPACE))) {
-				maxWidthOfColumn = field->table->width +
+				maxWidthOfColumn = fw +
 						2 * FIELD_BORDER_SPACE;
 				}
 			}
@@ -775,19 +798,22 @@ int accumulateColWidth;
 #endif
 		t->height += t->table[y * t->numColumns].rowHeight;
 		}
-#ifndef DISABLE_TRACE
-
-/*
-	t->bwidth=t->width-t->borders;
-	t->bheight=t->height-t->borders;
-*/
-	/*
-	t->bwidth=t->width;
-	t->bheight=t->height;
-	*/
+	/* (these used to sit inside the DISABLE_TRACE conditional,
+	   which would have dropped the border padding -- and the
+	   caption room -- from no-trace builds) */
 	t->width+=(t->borders*2);
 	t->height+=(t->borders*2);
 
+	/* leave room to draw the caption */
+	t->captionHeight = 0;
+	if ((t->caption != NULL)&&(t->caption[0] != '\0')) {
+		t->captionHeight =
+			FONTHEIGHT(hw->html.plainbold_font) +
+			FIELD_BORDER_SPACE;
+		t->height += t->captionHeight;
+		}
+
+#ifndef DISABLE_TRACE
 	if (htmlwTrace) {
 		TableDump(t);
 		fprintf(stderr,"TableCalculateDimensions(): table is %d x %d\n",
@@ -876,24 +902,52 @@ Boolean expandedSomething;
 static void TableFieldSetAttributes(hw,field,mptr)
 HTMLWidget hw;
 TableField *field;
-struct mark_up **mptr;
+struct mark_up *mptr;
 {
 struct mark_up *m;
-/*
-Boolean bold;
-Boolean italic;
-Boolean fixed;
-*/
+int len;
 
-
-/* for right now, only get the text */
+/* Gather ALL the text runs between this cell's tag and the next
+   cell/row/table boundary (the old code kept only the first run, so
+   everything after the first inline tag in a cell was lost).  Along
+   the way note the cell's first link, its first image, and a font
+   for the whole cell.  The parser already expanded entities in the
+   text, so it must not be clean_text()ed a second time (that eats
+   literal '&'s). */
 
 	field->font = hw->html.plain_font; /* default font */
-	m = (*mptr)->next;
+	len = 0;
+	m = mptr->next;
 	while(m && (m->type != M_TABLE) && (m->type != M_TABLE_ROW) &&
-		(m->type != M_TABLE_DATA) && (m->type != M_TABLE_HEADER)
-		&& (m->type != M_NONE)) {
-		if (!m->is_end) { /* effect is to only use the top on stack */
+		(m->type != M_TABLE_DATA) && (m->type != M_TABLE_HEADER)) {
+		if (m->type == M_NONE) {
+			char *tp;
+
+			/* skip all-whitespace runs between tags */
+			tp = m->text;
+			while ((tp != (char *) 0)&&(*tp)&&
+				isspace((unsigned char)*tp)) {
+				tp++;
+				}
+			if ((tp != (char *) 0)&&(*tp)) {
+				int rl = strlen(m->text);
+
+				if (field->text == (char *) 0) {
+					field->text = (char *)malloc(rl + 1);
+					strcpy(field->text, m->text);
+					len = rl;
+					}
+				else {
+					field->text = (char *)realloc(
+						field->text, len + rl + 2);
+					field->text[len] = ' ';
+					strcpy(field->text + len + 1,
+						m->text);
+					len += rl + 1;
+					}
+				}
+			}
+		else if (!m->is_end) {
 		    switch(m->type) {
 			case M_ITALIC:
 			case M_VARIABLE:
@@ -915,6 +969,26 @@ Boolean fixed;
 							MT_ANCHOR, "HREF");
 						}
 					break;
+			case M_IMAGE:
+					/* first image in the cell wins */
+					if ((field->image ==
+						(ImageInfo *) 0)&&
+					    (m->start != (char *) 0)&&
+					    (hw->html.resolveImage != NULL)) {
+						char *isrc;
+
+						isrc = ParseMarkTag(m->start,
+							MT_IMAGE, "SRC");
+						if (isrc != (char *) 0) {
+						    field->image = (ImageInfo *)
+							(*(resolveImageProc)
+							(hw->html.resolveImage))
+							((Widget)hw, isrc,
+							 0, NULL, NULL);
+						    free(isrc);
+						    }
+						}
+					break;
 			case M_FIXED:
 			case M_CODE:
 			case M_SAMPLE:
@@ -929,12 +1003,22 @@ Boolean fixed;
 	if (field->header) {
 		field->font = hw->html.plainbold_font;
 		}
-	if (m->type == M_NONE){ /* text */
-		field->type = F_TEXT;
-		field->text = strdup(m->text);
-		clean_text(field->text);
-		}
+	if (field->text != (char *) 0) {
+		char *p;
 
+		/* flatten embedded newlines/tabs: the single-line
+		   display branch draws the raw string */
+		for (p = field->text; *p; p++) {
+			if (isspace((unsigned char)*p)) {
+				*p = ' ';
+				}
+			}
+		field->type = F_TEXT;
+		}
+	else if ((field->image != (ImageInfo *) 0)&&
+		 (field->image->width > 0)) {
+		field->type = F_IMAGE;
+		}
 }
 
 
@@ -962,6 +1046,8 @@ char *tptr;
 	t->numColumns = 0;
 	t->numRows = 0;
 	t->caption = (char *) 0;
+	t->captionAlignment = ALIGN_TOP;
+	t->captionHeight = 0;
 
 	if (tptr=ParseMarkTag(((*mptr)->start),MT_TABLE,"BORDER")) {
 		t->borders = atoi(tptr);
@@ -1026,11 +1112,54 @@ char *tptr;
 			}
 
 		else if (m->type == M_CAPTION) {
-			if (ParseMarkTag(m->start,MT_CAPTION,"top")) {
-				t->captionAlignment = ALIGN_TOP;
-				}
-			else {
-				t->captionAlignment = ALIGN_BOTTOM;
+			if (!m->is_end) {
+				char *aval;
+
+				/* captions draw on top unless asked not to
+				   (modern default; the old code showed them
+				   on the bottom and dropped the text) */
+				aval = ParseMarkTag(m->start,MT_CAPTION,
+					"ALIGN");
+				if (caseless_equal(aval,"bottom")) {
+					t->captionAlignment = ALIGN_BOTTOM;
+					}
+				else {
+					t->captionAlignment = ALIGN_TOP;
+					}
+				if (aval != (char *) 0) {
+					free(aval);
+					}
+
+				/* collect the caption's text runs; stop at
+				   the first non-text mark so a missing end
+				   tag cannot eat the table */
+				while ((m->next != (struct mark_up *) 0)&&
+					(m->next->type == M_NONE)) {
+					m = m->next;
+					if (m->text == (char *) 0) {
+						continue;
+						}
+					if (t->caption == (char *) 0) {
+						t->caption = strdup(m->text);
+						}
+					else {
+						t->caption = (char *)realloc(
+						    t->caption,
+						    strlen(t->caption) +
+						    strlen(m->text) + 2);
+						strcat(t->caption, " ");
+						strcat(t->caption, m->text);
+						}
+					}
+				if (t->caption != (char *) 0) {
+					char *cp;
+
+					for (cp = t->caption; *cp; cp++) {
+						if (isspace((unsigned char)*cp)) {
+							*cp = ' ';
+							}
+						}
+					}
 				}
 			}
 
@@ -1091,7 +1220,7 @@ char *tptr;
 			else {
 				field->alignment = ALIGN_CENTER;
 				}
-			TableFieldSetAttributes(hw,field,&m);
+			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
 			columnCount++;
@@ -1134,7 +1263,7 @@ char *tptr;
 			else {
 				field->alignment = ALIGN_CENTER;
 				}
-			TableFieldSetAttributes(hw,field,&m);
+			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
 			columnCount++;
@@ -1184,7 +1313,18 @@ char *tptr;
 		rowList = (List) ListHead(tableList);
 		}
 
-	TableCalculateDimensions(hw,t,622);
+	{
+		int pageWidth;
+
+		/* lay the table out for the real view, not the 622
+		   pixels the original code hardcoded */
+		pageWidth = (int)hw->html.view_width -
+			(int)(2 * hw->html.margin_width);
+		if (pageWidth < 300) {
+			pageWidth = 622;
+			}
+		TableCalculateDimensions(hw,t,pageWidth);
+	}
 
 #ifndef DISABLE_TRACE
 	if (htmlwTrace) {
@@ -1221,6 +1361,30 @@ int yy;
 		TableDraw(hw, eptr, (TableInfo *)field->table,
 			x + FIELD_BORDER_SPACE,
 			y + FIELD_BORDER_SPACE);
+		return 0;
+		}
+
+	if (field->type == F_IMAGE) {
+		ImageInfo *pic = field->image;
+		int ix, iy;
+
+		if ((pic->image == None)&&(pic->image_data != NULL)) {
+			pic->image = InfoToImage(hw, pic, 0);
+			}
+		if (pic->image != None) {
+			/* center the image in its cell */
+			ix = x + (width - pic->width) / 2;
+			iy = y + (height - pic->height) / 2;
+			if (ix < (x + FIELD_BORDER_SPACE)) {
+				ix = x + FIELD_BORDER_SPACE;
+				}
+			if (iy < (y + FIELD_BORDER_SPACE)) {
+				iy = y + FIELD_BORDER_SPACE;
+				}
+			XCopyArea(XtDisplay(hw), pic->image,
+				XtWindow(hw->html.view), hw->html.drawGC,
+				0, 0, pic->width, pic->height, ix, iy);
+			}
 		return 0;
 		}
 
@@ -1274,7 +1438,8 @@ int yy;
                             ttd,
                             hw->html.drawGC,
                             placeX,
-                            placeY+baseLine,
+                            placeY, /* XmStringDraw wants the TOP,
+                                       not the baseline */
                             XmStringWidth(tftd,ttd),
                             XmALIGNMENT_BEGINNING,
                             XmSTRING_DIRECTION_L_TO_R,
@@ -1372,6 +1537,42 @@ int expandedWidth,expandedHeight;
 			   JoinMiter);
 	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
 	XSetBackground(XtDisplay(hw), hw->html.drawGC, eptr->bg);
+
+	if ((t->caption != NULL)&&(t->captionHeight > 0)) {
+		XFontStruct *cfont = hw->html.plainbold_font;
+		int capx, capy, capw;
+		XmString cs;
+		XmFontList cfl;
+
+		capw = XTextWidth(cfont, t->caption, strlen(t->caption));
+		capx = x + (t->width - capw) / 2;
+		if (capx < x) {
+			capx = x;
+			}
+		if (t->captionAlignment == ALIGN_BOTTOM) {
+			capy = y + t->height - t->captionHeight;
+			}
+		else {
+			capy = y;
+			/* the grid starts below a top caption */
+			y += t->captionHeight;
+			}
+		XSetFont(XtDisplay(hw), hw->html.drawGC, cfont->fid);
+		cs = XmStringCreateLocalized(t->caption);
+		cfl = XmFontListCreate(cfont, XmSTRING_DEFAULT_CHARSET);
+		XmStringDraw(XtDisplay(hw), XtWindow(hw->html.view),
+			cfl, cs, hw->html.drawGC,
+			capx, capy,
+			XmStringWidth(cfl, cs),
+			XmALIGNMENT_BEGINNING,
+			XmSTRING_DIRECTION_L_TO_R, NULL);
+		XmStringFree(cs);
+		XmFontListFree(cfl);
+		}
+	else if ((t->captionHeight > 0)&&
+		(t->captionAlignment != ALIGN_BOTTOM)) {
+		y += t->captionHeight;
+		}
 
 	field = t->table;
 	horizMarker = y+t->borders;
@@ -1472,6 +1673,12 @@ int expandedWidth,expandedHeight;
 
 	if (t == NULL) {
 		return((char *) 0);
+		}
+
+	/* the grid sits below a top caption */
+	if ((t->captionHeight > 0)&&
+		(t->captionAlignment != ALIGN_BOTTOM)) {
+		y += t->captionHeight;
 		}
 
 	field = t->table;
