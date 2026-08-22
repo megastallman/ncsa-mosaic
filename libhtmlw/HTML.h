@@ -443,6 +443,7 @@ struct delay_rec {
 #define M_DIV		61 /* generic block: div, section, article, ... */
 #define M_SKIP		62 /* contents never rendered: script, style, svg, ... */
 #define M_NOOP		63 /* recognized tag with no rendering effect */
+#define M_BUTTON	64 /* HTML5 <button>; becomes a fake INPUT widget */
 
 /* syntax of Mark types */
 #define	MT_TITLE	"title"

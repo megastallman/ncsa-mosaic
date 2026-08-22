@@ -178,6 +178,8 @@ static struct ele_rec *Current;
 static char *AnchorText;
 static char *TitleText;
 static char *TextAreaBuf;
+static char *ButtonBuf;
+static char *ButtonAttrs;
 static struct mark_up *Last;
 static FormInfo *CurrentForm;
 static MapInfo *CurrentMap=NULL; /* csi stuff -- swp */
@@ -3507,7 +3509,7 @@ int *x, *y;
 	 */
 	if ((Ignore)&&(!InDocHead)&&(type != M_TITLE)&&(type != M_NONE)&&(type != M_COMMENT)&&
 		(type != M_SELECT)&&(type != M_OPTION)&&
-		(type != M_TEXTAREA)&&(type != M_DOC_HEAD))
+		(type != M_TEXTAREA)&&(type != M_BUTTON)&&(type != M_DOC_HEAD))
 	{
 		return;
 	}
@@ -3520,7 +3522,7 @@ int *x, *y;
 		 */
 	case M_NONE:
 		if ((Ignore)&&(CurrentSelect == NULL)&&
-			(TextAreaBuf == NULL))
+			(TextAreaBuf == NULL)&&(ButtonBuf == NULL))
 		{
 			if (TitleText == NULL)
 			{
@@ -3559,6 +3561,14 @@ int *x, *y;
 		else if ((Ignore)&&(TextAreaBuf != NULL))
 		{
 			TextAreaBuf = TextAreaAddValue(TextAreaBuf,
+										   (*mptr)->text);
+		}
+		else if ((Ignore)&&(ButtonBuf != NULL))
+		{
+			/*
+			 * Collecting the label of a BUTTON element.
+			 */
+			ButtonBuf = TextAreaAddValue(ButtonBuf,
 										   (*mptr)->text);
 		}
 		else if (Preformat)
@@ -4190,6 +4200,164 @@ int *x, *y;
 
 				TextAreaBuf = buf;
 				Ignore = 1;
+			}
+		}
+		break;
+		/*
+		 * BUTTONs become fake INPUT tags, like TEXTAREAs do; the
+		 * element content is collected as the value (the label).
+		 * A button with no type submits, per the HTML spec.
+		 * Can only be inside a FORM tag; outside of one, the
+		 * label just renders as text.
+		 */
+	case M_BUTTON:
+		if (CurrentForm != NULL)
+		{
+			if ((mark->is_end)&&(ButtonBuf != NULL))
+			{
+				char *start;
+				char *buf;
+				char *label;
+				int blank;
+
+				/*
+				 * Finish the fake INPUT tag.  The collected
+				 * label goes in front of the original
+				 * attributes so it wins over any VALUE
+				 * attribute for display; a button with no
+				 * (or an all-blank) label falls back to
+				 * its VALUE attribute.
+				 */
+				label = (char *)(ButtonBuf +
+					strlen(MT_INPUT) +
+					strlen(" value=\""));
+				blank = 1;
+				for (start = label; *start != '\0'; start++)
+				{
+					if (!isspace((int)*start))
+					{
+						blank = 0;
+						break;
+					}
+				}
+
+				buf = (char *)malloc(strlen(ButtonBuf) +
+					strlen(ButtonAttrs) + 2);
+				if (blank)
+				{
+					strcpy(buf, MT_INPUT);
+					strcat(buf, ButtonAttrs);
+				}
+				else
+				{
+					char *cleaned;
+
+					/*
+					 * Squash the label onto one line.
+					 */
+					cleaned = (char *)malloc(
+						strlen(label) + 1);
+					strcpy(cleaned, label);
+					clean_white_space(cleaned);
+
+					strcpy(buf, MT_INPUT);
+					strcat(buf, " value=\"");
+					strcat(buf, cleaned);
+					strcat(buf, "\"");
+					strcat(buf, ButtonAttrs);
+					free(cleaned);
+				}
+
+				/*
+				 * stick the fake in, saving the
+				 * real one.
+				 */
+				start = mark->start;
+				mark->start = buf;
+				mark->is_end = 0;
+				WidgetPlace(hw, mark, x, y, Width);
+
+				/*
+				 * free the fake, put the original back
+				 */
+				free(buf);
+				free(ButtonBuf);
+				free(ButtonAttrs);
+				mark->start = start;
+				mark->is_end = 1;
+				ButtonBuf = NULL;
+				ButtonAttrs = NULL;
+				Ignore = 0;
+			}
+			else if ((!mark->is_end)&&(ButtonBuf == NULL))
+			{
+				char *tptr;
+				int self_closed;
+
+				/*
+				 * Save the button's own attributes for the
+				 * end tag; a button with no type submits,
+				 * per the HTML spec.
+				 */
+				ButtonAttrs = (char *)malloc(
+					strlen(mark->start) +
+					strlen(" type=submit") + 1);
+				strcpy(ButtonAttrs, (char *)
+					   (mark->start +
+						strlen("button")));
+				self_closed = ((ButtonAttrs[0] != '\0')&&
+					(ButtonAttrs[strlen(ButtonAttrs) - 1]
+						== '/'));
+				if (self_closed)
+				{
+					ButtonAttrs[strlen(ButtonAttrs) - 1] =
+						'\0';
+				}
+				tptr = ParseMarkTag(mark->start,
+									"button", "TYPE");
+				if (tptr == NULL)
+				{
+					strcat(ButtonAttrs, " type=submit");
+				}
+				else
+				{
+					free(tptr);
+				}
+
+				if (self_closed)
+				{
+					/*
+					 * No content, so no end tag will
+					 * come; place the widget right away,
+					 * labeled by its VALUE attribute.
+					 */
+					char *buf;
+
+					buf = (char *)malloc(
+						strlen(MT_INPUT) +
+						strlen(ButtonAttrs) + 1);
+					strcpy(buf, MT_INPUT);
+					strcat(buf, ButtonAttrs);
+					tptr = mark->start;
+					mark->start = buf;
+					WidgetPlace(hw, mark, x, y, Width);
+					mark->start = tptr;
+					free(buf);
+					free(ButtonAttrs);
+					ButtonAttrs = NULL;
+				}
+				else
+				{
+					/*
+					 * Start collecting the label.
+					 */
+					ButtonBuf = (char *)malloc(
+						strlen(MT_INPUT) +
+						strlen(" value=\"") + 1);
+					strcpy(ButtonBuf, MT_INPUT);
+					strcat(ButtonBuf, " value=\"");
+					Ignore = 1;
+				}
 			}
 		}
 		break;
@@ -4981,6 +5149,8 @@ FormatAll(hw, Fwidth)
 	CurrentForm = NULL;
 	CurrentSelect = NULL;
 	TextAreaBuf = NULL;
+	ButtonBuf = NULL;
+	ButtonAttrs = NULL;
         Superscript = 0; /* amb */
         Subscript = 0;
 	InDocHead = 0;

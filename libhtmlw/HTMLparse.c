@@ -1349,7 +1349,7 @@ static struct
 	{"rp", M_NOOP},
 	{"slot", M_NOOP},
 	{"label", M_NOOP},
-	{"button", M_NOOP},
+	{"button", M_BUTTON},
 	{"optgroup", M_NOOP},
 	{"output", M_NOOP},
 	{"progress", M_NOOP},
