@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <curl/curl.h>
 
 #include "HTTP.h"
@@ -92,6 +94,51 @@ typedef struct _CurlState
 
   int no_stack;			/* no way to convert the content */
 } CurlState;
+
+/* ------------------------------ cookies --------------------------------- */
+
+/*
+ * Persistent cookie jar (Netscape format, managed entirely by
+ * libcurl's cookie engine) in ~/.mosaic/cookies, so logins survive
+ * between sessions.  The in-memory cookie store lives in the easy
+ * handle and survives curl_easy_reset; the saved jar is read once at
+ * the first request and flushed to disk after every request, since
+ * the handle never gets a curl_easy_cleanup.
+ */
+
+static char cookie_jar[512];
+
+static void setup_cookie_jar (CURL *handle)
+{
+  static int have_jar = -1;
+
+  if (have_jar < 0)
+    {
+      char *home = getenv ("HOME");
+
+      cookie_jar[0] = '\0';
+      if ((home != NULL) && (strlen (home) + 32 < sizeof (cookie_jar)))
+        {
+          sprintf (cookie_jar, "%s/.mosaic", home);
+          mkdir (cookie_jar, 0700);	/* usually exists already */
+          strcat (cookie_jar, "/cookies");
+        }
+      have_jar = (cookie_jar[0] != '\0');
+      if (have_jar)
+        {
+          /* read the cookies saved by previous sessions */
+          curl_easy_setopt (handle, CURLOPT_COOKIEFILE, cookie_jar);
+        }
+    }
+
+  if (have_jar)
+    {
+      /* keep the engine enabled after curl_easy_reset, and tell
+         the FLUSH below where to write */
+      curl_easy_setopt (handle, CURLOPT_COOKIEFILE, "");
+      curl_easy_setopt (handle, CURLOPT_COOKIEJAR, cookie_jar);
+    }
+}
 
 /* -------------------- session certificate whitelist --------------------- */
 
@@ -383,6 +430,8 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
     curl_easy_setopt (handle, CURLOPT_VERBOSE, 1L);
 #endif
 
+  setup_cookie_jar (handle);
+
   if (proxy)
     curl_easy_setopt (handle, CURLOPT_PROXY, proxy);
 
@@ -625,6 +674,12 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
     }
 
  done:
+  /* Persist any new cookies now: the static handle never gets a
+     curl_easy_cleanup, which is when the jar would normally be
+     written. */
+  if (cookie_jar[0])
+    curl_easy_setopt (handle, CURLOPT_COOKIELIST, "FLUSH");
+
   /* Clear out on exit, just in case. */
   do_post = 0;
 
