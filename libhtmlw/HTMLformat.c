@@ -6603,6 +6603,19 @@ LocateElement(hw, x, y, pos)
 				break;
 			}
 		}
+		else if ((eptr->type == E_TABLE)&&(eptr->table_data != NULL))
+		{
+			/* a table spans many lines: test against its own
+			   box so cell anchors inside it can be resolved */
+			tx1 = eptr->x;
+			tx2 = eptr->x + eptr->table_data->width;
+			if ((x >= tx1)&&(x <= tx2)&&(y >= eptr->y)&&
+				(y <= (eptr->y + eptr->table_data->height)))
+			{
+				rptr = eptr;
+				break;
+			}
+		}
 		else if (eptr->type == E_LINEFEED)
 		{
 			tx1 = eptr->x;

@@ -263,6 +263,7 @@ typedef struct table_field {
 	/* contents */
 	FieldType	type;
 	char		*text;
+	char		*href;		/* anchor this cell's content is in */
 	XFontStruct	*font;
 	char		**formattedText;
 	int		numLines;	/* for formatted text */

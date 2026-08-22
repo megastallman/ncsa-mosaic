@@ -106,6 +106,7 @@ extern char *ParseTextToPrettyString();
 extern char *ParseTextToPSString();
 extern struct mark_up *HTMLParse();
 extern struct ele_rec *LocateElement();
+extern void TableResolveAnchor();
 extern struct ele_rec **MakeLineList();
 extern void FreeHRefs();
 extern struct ref_rec *AddHRef();
@@ -3436,6 +3437,7 @@ SelectStart(w, event, params, num_params)
 	hw->html.new_end_pos = 0;
 
 	eptr = LocateElement(hw, BuEvent->x, BuEvent->y, &epos);
+	TableResolveAnchor(hw, eptr, BuEvent->x, BuEvent->y);
 	if (eptr != NULL)
 	{
 		/*
@@ -3774,6 +3776,7 @@ ExtendEnd(w, event, params, num_params)
 	}
 
 	eptr = LocateElement(hw, BuEvent->x, BuEvent->y, &epos);
+	TableResolveAnchor(hw, eptr, BuEvent->x, BuEvent->y);
 
 	/*
 	 * If we just released button one or two, and we are on an object,
@@ -3989,6 +3992,7 @@ TrackMotion(w, event, params, num_params)
           }
 
 	eptr = LocateElement(hw, x, y, &epos);
+	TableResolveAnchor(hw, eptr, x, y);
 
         /* We're hitting a new anchor if eptr exists and
            eptr != cached tracked element and anchorHRef != NULL. */
@@ -4087,6 +4091,8 @@ _HTMLInput(
 	{
 		eptr = LocateElement(hw, event->xbutton.x, event->xbutton.y,
 				&epos);
+		TableResolveAnchor(hw, eptr,
+				event->xbutton.x, event->xbutton.y);
 		if (eptr != NULL)
 		{
 			if (eptr->anchorHRef != NULL)

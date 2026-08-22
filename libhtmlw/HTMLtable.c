@@ -47,6 +47,7 @@ TableField *tf;
 
 	tf->type = F_NONE;
 	tf->text = (char *) 0;
+	tf->href = (char *) 0;
 	tf->font = (XFontStruct *) 0;
 	tf->formattedText = (char **) 0;
 	tf->numLines = 0;
@@ -901,8 +902,18 @@ Boolean fixed;
 					break;
 			case M_BOLD:
 			case M_STRONG:
+					field->font = hw->html.bold_font;
+					break;
 			case M_ANCHOR:
 					field->font = hw->html.bold_font;
+					/* first link in the cell wins; the
+					   whole cell becomes that link */
+					if ((field->href == (char *) 0)&&
+					    (m->start != (char *) 0)) {
+						field->href = ParseMarkTag(
+							m->start,
+							MT_ANCHOR, "HREF");
+						}
 					break;
 			case M_FIXED:
 			case M_CODE:
@@ -1251,7 +1262,9 @@ int yy;
 		XSetLineAttributes(XtDisplay(hw),hw->html.drawGC,1,LineSolid,
 			CapNotLast,JoinMiter);
 		XSetBackground(XtDisplay(hw), hw->html.drawGC, eptr->bg);
-		XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
+		XSetForeground(XtDisplay(hw), hw->html.drawGC,
+			(field->href != (char *) 0) ?
+				hw->html.anchor_fg : eptr->fg);
 		XSetFont(XtDisplay(hw), hw->html.drawGC, field->font->fid);
 		XmString ttd=XmStringCreateLocalized(field->formattedText[yy]);
                 XmFontList tftd=XmFontListCreate(field->font,XmSTRING_DEFAULT_CHARSET); 
@@ -1267,8 +1280,15 @@ int yy;
                             XmSTRING_DIRECTION_L_TO_R,
                             NULL);
                XmStringFree(ttd);
-               XmFontListFree(tftd); 
+               XmFontListFree(tftd);
 
+		if (field->href != (char *) 0) {
+			/* underline the cell's text like other anchors */
+			XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
+				hw->html.drawGC,
+				placeX, placeY + baseLine + 1,
+				placeX + stringWidth, placeY + baseLine + 1);
+			}
 
 		placeY += lineHeight;
 		}
@@ -1432,4 +1452,88 @@ struct ele_rec *eptr;
 	TableDraw(hw, eptr, eptr->table_data,
 		eptr->x - hw->html.scroll_x,
 		eptr->y - hw->html.scroll_y);
+}
+
+
+/* find the anchor (if any) of the table cell under view coordinates
+   ex,ey; x,y is the table's origin in the same coordinate space.
+   Walks the grid with the same arithmetic TableDraw uses, and
+   recurses into nested tables. */
+static char *TableAnchorAt(t,x,y,ex,ey)
+TableInfo *t;
+int x,y;
+int ex,ey;
+{
+register int xx,yy;
+TableField *field;
+int vertMarker,horizMarker;
+int colWidth,rowHeight;
+int expandedWidth,expandedHeight;
+
+	if (t == NULL) {
+		return((char *) 0);
+		}
+
+	field = t->table;
+	horizMarker = y+t->borders;
+	for (yy = 0; yy < t->numRows; yy++) {
+		vertMarker = x+(t->borders/2);
+		rowHeight = field->rowHeight;
+		for (xx = 0; xx < t->numColumns; xx++) {
+			colWidth = field->colWidth;
+			TableGetExpandedDimensions(t,xx,yy,
+				&expandedWidth,&expandedHeight);
+			if ((ex >= vertMarker)&&
+			    (ex < (vertMarker + expandedWidth))&&
+			    (ey >= horizMarker)&&
+			    (ey < (horizMarker + expandedHeight))) {
+				if (field->type == F_TABLE) {
+					return(TableAnchorAt(
+						(TableInfo *)field->table,
+						vertMarker+FIELD_BORDER_SPACE,
+						horizMarker+FIELD_BORDER_SPACE,
+						ex, ey));
+					}
+				return(field->href);
+				}
+			vertMarker += colWidth;
+			field++;
+			}
+		horizMarker += rowHeight;
+		}
+	return((char *) 0);
+}
+
+
+/* Called from the mouse paths in HTML.c after LocateElement: when
+   the element under the pointer is a table, stamp the anchor of the
+   cell under the pointer onto the element so the ordinary anchor
+   machinery (activation, tracking, cursor) works unchanged.  The
+   element's anchorHRef is owned by the element (FreeLineList frees
+   it), hence the strdup. */
+void TableResolveAnchor(hw,eptr,ex,ey)
+HTMLWidget hw;
+struct ele_rec *eptr;
+int ex,ey;
+{
+char *href;
+
+	if ((eptr == NULL)||(eptr->type != E_TABLE)||
+	    (eptr->table_data == NULL)) {
+		return;
+		}
+
+	href = TableAnchorAt(eptr->table_data,
+		eptr->x - hw->html.scroll_x,
+		eptr->y - hw->html.scroll_y,
+		ex, ey);
+
+	if ((eptr->anchorHRef != NULL)&&(href != NULL)&&
+	    (strcmp(eptr->anchorHRef, href) == 0)) {
+		return; /* already stamped with this link */
+		}
+	if (eptr->anchorHRef != NULL) {
+		free(eptr->anchorHRef);
+		}
+	eptr->anchorHRef = (href != NULL) ? strdup(href) : NULL;
 }
