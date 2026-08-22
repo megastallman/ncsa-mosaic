@@ -60,9 +60,12 @@ int i;
 	/* Establish the setjmp return context for my_error_exit to use. */
 
 	if (setjmp(jerr.setjmp_buffer)) {
-		/* If we get here, the JPEG code has signaled an error. */
+		/* If we get here, the JPEG code has signaled an error.
+		   The file stays open: it belongs to the caller
+		   (ReadBitmap), which closes it on every path --
+		   closing it here caused a double fclose whenever a
+		   non-JPEG file (e.g. webp) fell through every reader. */
     		jpeg_destroy_decompress(&cinfo);
-		fclose(infile);
 
 		if (retBuffer) {
 			free(retBuffer);
