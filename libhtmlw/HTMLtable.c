@@ -29,6 +29,28 @@ extern int htmlwTrace;
  */
 static void TableDraw();
 extern Pixmap InfoToImage();
+extern WidgetInfo *TableMakeWidget();
+
+/* total size of a cell full of form widgets, laid out left to right
+   with a gap between them */
+static void TableWidgetCellSize(field, wsum, hmax)
+TableField *field;
+int *wsum, *hmax;
+{
+int wi;
+
+	*wsum = 0;
+	*hmax = 0;
+	for (wi = 0; wi < field->winfo_cnt; wi++) {
+		*wsum += field->winfos[wi]->width;
+		if (wi > 0) {
+			*wsum += FIELD_BORDER_SPACE;
+			}
+		if (field->winfos[wi]->height > *hmax) {
+			*hmax = field->winfos[wi]->height;
+			}
+		}
+}
 
 static TableField *NewTableField()
 {
@@ -56,7 +78,8 @@ TableField *tf;
 	tf->numLines = 0;
 
 	tf->image = (ImageInfo *) 0;
-	tf->winfo = (WidgetInfo *) 0;
+	tf->winfos = (WidgetInfo **) 0;
+	tf->winfo_cnt = 0;
 	tf->table = (struct table_rec *) 0;
 
 	return(tf);
@@ -494,6 +517,14 @@ int accumulateColWidth;
 			field->minWidth = field->image->width;
 			field->minHeight = field->image->height;
 			}
+		else if (field->type == F_WIDGET) {
+			int wsum, hmax;
+
+			TableWidgetCellSize(field, &wsum, &hmax);
+			field->maxWidth = wsum;
+			field->minWidth = wsum;
+			field->minHeight = hmax;
+			}
 		else {
 			/* non text */
 			field->maxWidth = 0;
@@ -681,6 +712,20 @@ int accumulateColWidth;
 							+ 2 * FIELD_BORDER_SPACE;
 						}
 					}
+				else if (field->type == F_WIDGET) {
+					int wsum, hmax;
+
+					TableWidgetCellSize(field,
+						&wsum, &hmax);
+					field->rowHeight = hmax
+						+ 2 * FIELD_BORDER_SPACE;
+					if (field->colWidth <
+						(wsum +
+						 2 * FIELD_BORDER_SPACE)) {
+						field->colWidth = wsum
+							+ 2 * FIELD_BORDER_SPACE;
+						}
+					}
 
 #ifndef DISABLE_TRACE
 				if (htmlwTrace) {
@@ -761,6 +806,11 @@ int accumulateColWidth;
 				}
 			else if (field->type == F_IMAGE) {
 				fw = field->image->width;
+				}
+			else if (field->type == F_WIDGET) {
+				int hmax;
+
+				TableWidgetCellSize(field, &fw, &hmax);
 				}
 			if ((fw > 0)&&
 			    (maxWidthOfColumn < (fw +
@@ -989,6 +1039,29 @@ int len;
 						    }
 						}
 					break;
+			case M_INPUT:
+					/* form widgets in the cell; they lay
+					   out left to right at draw time.
+					   Hidden inputs register with the
+					   form but have no widget to show. */
+					if (m->start != (char *) 0) {
+						WidgetInfo *wp;
+
+						wp = TableMakeWidget(hw,
+							m->start);
+						if ((wp != (WidgetInfo *) 0)&&
+						    (wp->w != NULL)) {
+							field->winfos =
+							  (WidgetInfo **)realloc(
+							    field->winfos,
+							    (field->winfo_cnt+1) *
+							    sizeof(WidgetInfo *));
+							field->winfos[
+							  field->winfo_cnt] = wp;
+							field->winfo_cnt++;
+							}
+						}
+					break;
 			case M_FIXED:
 			case M_CODE:
 			case M_SAMPLE:
@@ -1003,7 +1076,12 @@ int len;
 	if (field->header) {
 		field->font = hw->html.plainbold_font;
 		}
-	if (field->text != (char *) 0) {
+	if (field->winfo_cnt > 0) {
+		/* widgets win over text and images: a half-lost label
+		   is cosmetic, an invisible form field is unusable */
+		field->type = F_WIDGET;
+		}
+	else if (field->text != (char *) 0) {
 		char *p;
 
 		/* flatten embedded newlines/tabs: the single-line
@@ -1361,6 +1439,36 @@ int yy;
 		TableDraw(hw, eptr, (TableInfo *)field->table,
 			x + FIELD_BORDER_SPACE,
 			y + FIELD_BORDER_SPACE);
+		return 0;
+		}
+
+	if (field->type == F_WIDGET) {
+		int wi, cx, wy;
+		WidgetInfo *wp;
+
+		/* lay the widgets out left to right, vertically centered;
+		   store doc coordinates so ScrollWidgets keeps them in
+		   place when the page scrolls */
+		cx = x + FIELD_BORDER_SPACE;
+		for (wi = 0; wi < field->winfo_cnt; wi++) {
+			wp = field->winfos[wi];
+			if (wp->w == NULL) {
+				continue;
+				}
+			wy = y + (height - wp->height) / 2;
+			if (wy < (y + FIELD_BORDER_SPACE)) {
+				wy = y + FIELD_BORDER_SPACE;
+				}
+			wp->x = cx + hw->html.scroll_x;
+			wp->y = wy + hw->html.scroll_y;
+			XtMoveWidget(wp->w, cx, wy);
+			wp->seeable = 1;
+			if (wp->mapped == False) {
+				wp->mapped = True;
+				XtSetMappedWhenManaged(wp->w, True);
+				}
+			cx += wp->width + FIELD_BORDER_SPACE;
+			}
 		return 0;
 		}
 

@@ -3110,6 +3110,29 @@ ImagePlace(hw, mptr, x, y, width)
 
 
 /*
+ * Bridge for the table code: create (or on a reformat, reuse) a form
+ * widget for an <input> found inside a table cell.  The widget joins
+ * hw->html.widget_list, so ScrollWidgets moves it and the form
+ * submission code (which collects widgets by id range) includes it;
+ * the table drawing code positions it once cell geometry is known.
+ * Returns NULL when there is no open form, like the M_INPUT case.
+ */
+WidgetInfo *
+TableMakeWidget(hw, text)
+	HTMLWidget hw;
+	char *text;
+{
+	if (CurrentForm == NULL)
+	{
+		return(NULL);
+	}
+	WidgetId++;
+	/* parked offscreen until the table draw computes the cell
+	   position, so an early MapWidgets cannot flash it at 0,0 */
+	return(MakeWidget(hw, text, -4096, -4096, WidgetId, CurrentForm));
+}
+
+/*
  * Place a Widget. Add an element record for it.
  */
 void

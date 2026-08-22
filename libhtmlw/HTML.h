@@ -269,7 +269,8 @@ typedef struct table_field {
 	int		numLines;	/* for formatted text */
 
 	ImageInfo	*image;
-	WidgetInfo	*winfo;
+	WidgetInfo	**winfos;	/* F_WIDGET: form widgets in cell */
+	int		winfo_cnt;
 	struct table_rec *table;	/* F_TABLE: a nested table */
 } TableField;
 
