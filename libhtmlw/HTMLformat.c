@@ -180,6 +180,16 @@ static char *TitleText;
 static char *TextAreaBuf;
 static char *ButtonBuf;
 static char *ButtonAttrs;
+
+/*
+ * A <meta http-equiv=refresh> found while formatting; the browser
+ * GUI picks these up after the document is set and schedules the
+ * reload/redirect (see src/gui-documents.c).
+ */
+char *metaRefreshURL = NULL;
+int metaRefreshDelay = 0;
+
+extern int caseless_equal_prefix();
 static struct mark_up *Last;
 static FormInfo *CurrentForm;
 static MapInfo *CurrentMap=NULL; /* csi stuff -- swp */
@@ -3491,7 +3501,7 @@ int *x, *y;
 	if (InDocHead)
 		if ((type != M_TITLE)&&(type != M_NONE)&&(type != M_BASE)&&
 			(type != M_INDEX)&&(type != M_COMMENT)&&
-			(type != M_SKIP)&&(type != M_NOOP))
+			(type != M_SKIP)&&(type != M_NOOP)&&(type != M_META))
 		{
 			Ignore = 0;
 			InDocHead = 0;
@@ -3509,7 +3519,8 @@ int *x, *y;
 	 */
 	if ((Ignore)&&(!InDocHead)&&(type != M_TITLE)&&(type != M_NONE)&&(type != M_COMMENT)&&
 		(type != M_SELECT)&&(type != M_OPTION)&&
-		(type != M_TEXTAREA)&&(type != M_BUTTON)&&(type != M_DOC_HEAD))
+		(type != M_TEXTAREA)&&(type != M_BUTTON)&&(type != M_FORM)&&
+		(type != M_DOC_HEAD))
 	{
 		return;
 	}
@@ -4421,6 +4432,47 @@ int *x, *y;
 		 * Fillout forms.  Cannot be nested.
 		 */
 	case M_FORM:
+		/*
+		 * Recover from an unclosed SELECT, TEXTAREA or BUTTON:
+		 * a form boundary implies their end.  Without this the
+		 * rest of the document would be swallowed by Ignore.
+		 */
+		if (Ignore)
+		{
+			if (CurrentSelect != NULL)
+			{
+				if (CurrentSelect->option_buf != NULL)
+				{
+					free(CurrentSelect->option_buf);
+				}
+				FreeCommaList(CurrentSelect->options,
+					CurrentSelect->option_cnt);
+				FreeCommaList(CurrentSelect->returns,
+					CurrentSelect->option_cnt);
+				FreeCommaList(CurrentSelect->value,
+					CurrentSelect->value_cnt);
+				free((char *)CurrentSelect);
+				CurrentSelect = NULL;
+				Ignore = 0;
+			}
+			if (TextAreaBuf != NULL)
+			{
+				free(TextAreaBuf);
+				TextAreaBuf = NULL;
+				Ignore = 0;
+			}
+			if (ButtonBuf != NULL)
+			{
+				free(ButtonBuf);
+				ButtonBuf = NULL;
+				if (ButtonAttrs != NULL)
+				{
+					free(ButtonAttrs);
+					ButtonAttrs = NULL;
+				}
+				Ignore = 0;
+			}
+		}
 		ConditionalLineFeed(hw, x, y, 1);
 		if ((mark->is_end)&&(CurrentForm != NULL))
 		{
@@ -5003,6 +5055,99 @@ int *x, *y;
 	case M_COMMENT:
 		break;
 		/*
+		 * The only meta acted on is http-equiv=refresh, whose
+		 * delay and target are exported through metaRefreshDelay
+		 * and metaRefreshURL for the GUI to schedule.
+		 */
+	case M_META:
+		if ((!mark->is_end)&&(mark->start != NULL))
+		{
+			char *equiv;
+			char *content;
+
+			equiv = ParseMarkTag(mark->start, "meta",
+				"HTTP-EQUIV");
+			if ((equiv != NULL)&&
+				(caseless_equal(equiv, "refresh")))
+			{
+				content = ParseMarkTag(mark->start, "meta",
+					"CONTENT");
+				if (content != NULL)
+				{
+					char *cptr;
+					char *cend;
+
+					metaRefreshDelay = atoi(content);
+					/*
+					 * The forms seen in the wild:
+					 *   5
+					 *   5; url=http://x/
+					 *   0;URL='/relative'
+					 */
+					cptr = strchr(content, ';');
+					if (cptr != NULL)
+					{
+						cptr++;
+						while (isspace((int)*cptr))
+						{
+							cptr++;
+						}
+						if (!caseless_equal_prefix(
+							cptr, "url", 3))
+						{
+							cptr = NULL;
+						}
+					}
+					if (cptr != NULL)
+					{
+						cptr += 3;
+						while ((*cptr == '=')||
+							(isspace((int)*cptr)))
+						{
+							cptr++;
+						}
+						if ((*cptr == '\'')||
+							(*cptr == '\"'))
+						{
+							cend = strchr(cptr + 1,
+								*cptr);
+							cptr++;
+							if (cend != NULL)
+							{
+								*cend = '\0';
+							}
+						}
+						else
+						{
+							cend = cptr;
+							while ((*cend != '\0')&&
+							    (!isspace((int)*cend)))
+							{
+								cend++;
+							}
+							*cend = '\0';
+						}
+						if (*cptr != '\0')
+						{
+							if (metaRefreshURL)
+							{
+								free(metaRefreshURL);
+							}
+							metaRefreshURL = (char *)
+							    malloc(strlen(cptr) + 1);
+							strcpy(metaRefreshURL, cptr);
+						}
+					}
+					free(content);
+				}
+			}
+			if (equiv != NULL)
+			{
+				free(equiv);
+			}
+		}
+		break;
+		/*
 		 * Generic blocks (div, section, article, ...) just force
 		 * a line break on entry and exit.  Repeated breaks from
 		 * nested blocks collapse since the linefeed is conditional.
@@ -5150,6 +5295,13 @@ FormatAll(hw, Fwidth)
 	CurrentSelect = NULL;
 	TextAreaBuf = NULL;
 	ButtonBuf = NULL;
+	ButtonAttrs = NULL;
+	if (metaRefreshURL != NULL)
+	{
+		free(metaRefreshURL);
+	}
+	metaRefreshURL = NULL;
+	metaRefreshDelay = 0;
 	ButtonAttrs = NULL;
         Superscript = 0; /* amb */
         Subscript = 0;

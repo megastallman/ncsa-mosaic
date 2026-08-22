@@ -337,19 +337,32 @@ int
 	esc++;
 	if (*esc == '#')
 	{
+		char *numstart;
+		int base;
+
+		/* &#160; is decimal, &#xA0; (or &#XA0;) is hex */
+		numstart = (char *)(esc + 1);
+		base = 10;
+		if ((*numstart == 'x')||(*numstart == 'X'))
+		{
+			base = 16;
+			numstart++;
+		}
+
 		if (unterminated)
 		{
 			char *tptr;
 			char tchar;
 
-			tptr = (char *)(esc + 1);
-			while (isdigit((int)*tptr))
+			tptr = numstart;
+			while ((base == 16) ? isxdigit((int)*tptr) :
+				isdigit((int)*tptr))
 			{
 				tptr++;
 			}
 			tchar = *tptr;
 			*tptr = '\0';
-			ucs = atoi((esc + 1));
+			ucs = (unsigned int)strtol(numstart, NULL, base);
 			lng=ucs2utf8(ucs, val);
 #ifndef DISABLE_TRACE
 		  if (htmlwTrace) {
@@ -361,8 +374,8 @@ int
 		}
 		else
 		{
-			ucs=atoi((esc + 1));
-			lng=ucs2utf8(ucs, val); 
+			ucs = (unsigned int)strtol(numstart, NULL, base);
+			lng=ucs2utf8(ucs, val);
 			*endp = (char *)(esc + strlen(esc));
 #ifndef DISABLE_TRACE
 		  if (htmlwTrace) {
@@ -1330,7 +1343,7 @@ static struct
 	/* recognized tags with no rendering effect of their own;
 	   their contents (if any) render as fallback text */
 	{"html", M_NOOP},
-	{"meta", M_NOOP},
+	{"meta", M_META},
 	{"link", M_NOOP},
 	{"span", M_NOOP},
 	{"small", M_NOOP},
@@ -1398,7 +1411,9 @@ ParseMarkType(str)
 	tptr = str;
 	while (*tptr != '\0')
 	{
-		if (isspace((int)*tptr))
+		/* the name also ends at '/' so that XHTML-style
+		   self-closed void tags like <br/> are recognized */
+		if ((isspace((int)*tptr))||(*tptr == '/'))
 		{
 			break;
 		}
@@ -1776,9 +1791,10 @@ AnchorTag(ptrp, startp, endp)
 		return(tag_val);
 	}
 
-	if (*ptr == '\"')
+	if ((*ptr == '\"')||(*ptr == '\''))
 	{
-		quoted = 1;
+		/* remember which quote character opened the value */
+		quoted = (int)*ptr;
 		ptr++;
 	}
 
@@ -1788,7 +1804,7 @@ AnchorTag(ptrp, startp, endp)
 	 */
 	if (quoted)
 	{
-		while ((*ptr != '\"')&&(*ptr != '\0'))
+		while ((*ptr != (char)quoted)&&(*ptr != '\0'))
 		{
 			ptr++;
 		}

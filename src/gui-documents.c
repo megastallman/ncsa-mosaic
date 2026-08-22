@@ -73,6 +73,8 @@ extern Display *dsp;
 extern char reloading;
 extern int do_meta;
 
+void mo_maybe_schedule_meta_refresh (mo_window *win, char *url);
+
 #ifndef DISABLE_TRACE
 extern int srcTrace;
 #endif
@@ -585,7 +587,77 @@ mo_status mo_do_window_text (mo_window *win, char *url, char *txt,
         did_we_image_delay=0;
     }
 
+  mo_maybe_schedule_meta_refresh (win, url);
+
   return mo_succeed;
+}
+
+
+/****************************************************************************
+ * <meta http-equiv=refresh> support.  libhtmlw records the delay and
+ * target while formatting (metaRefreshDelay/metaRefreshURL); here we
+ * schedule the reload.  Only one refresh is pending at a time, and a
+ * new document load cancels a stale one.
+ ****************************************************************************/
+extern char *metaRefreshURL;   /* from libhtmlw/HTMLformat.c */
+extern int metaRefreshDelay;
+
+static XtIntervalId refresh_timer = 0;
+static char *refresh_target = NULL;
+static mo_window *refresh_win = NULL;
+
+static void meta_refresh_cb (XtPointer clid, XtIntervalId *id)
+{
+  char *target = refresh_target;
+
+  refresh_timer = 0;
+  refresh_target = NULL;
+
+  if (target)
+    {
+      mo_access_document (refresh_win, target);
+      free (target);
+    }
+}
+
+void mo_maybe_schedule_meta_refresh (mo_window *win, char *url)
+{
+  extern XtAppContext app_context;
+  int delay;
+
+  /* a newly displayed document always cancels a pending refresh */
+  if (refresh_timer)
+    {
+      XtRemoveTimeOut (refresh_timer);
+      refresh_timer = 0;
+    }
+  if (refresh_target)
+    {
+      free (refresh_target);
+      refresh_target = NULL;
+    }
+
+  if (!metaRefreshURL || !url)
+    return;
+
+  refresh_target = mo_url_canonicalize (metaRefreshURL, url);
+  if (!refresh_target)
+    return;
+
+  /* don't spin on a zero-delay refresh pointing back at this page */
+  delay = metaRefreshDelay;
+  if ((delay < 1) && (!strcmp (refresh_target, url)))
+    {
+      free (refresh_target);
+      refresh_target = NULL;
+      return;
+    }
+
+  refresh_win = win;
+  refresh_timer = XtAppAddTimeOut (app_context,
+                                   (delay < 1) ? 100 : (delay * 1000),
+                                   (XtTimerCallbackProc)meta_refresh_cb,
+                                   (XtPointer)win);
 }
 
 

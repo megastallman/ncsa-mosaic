@@ -444,6 +444,7 @@ struct delay_rec {
 #define M_SKIP		62 /* contents never rendered: script, style, svg, ... */
 #define M_NOOP		63 /* recognized tag with no rendering effect */
 #define M_BUTTON	64 /* HTML5 <button>; becomes a fake INPUT widget */
+#define M_META		65 /* <meta>; only http-equiv=refresh is acted on */
 
 /* syntax of Mark types */
 #define	MT_TITLE	"title"
