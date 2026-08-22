@@ -201,8 +201,15 @@ static int set_noto_fonts (mo_window *win, int sans, int sizeclass)
   static int hdr[3][6] = { { 24, 18, 17, 14, 12, 10 },
                            { 18, 17, 14, 12, 10,  8 },
                            { 25, 24, 20, 18, 17, 14 } };
-  static int plain[3] = { 14, 12, 18 };
   static int supsub[3] = { 10, 8, 14 };
+  /* the mono slots use the misc-fixed iso10646 bitmaps: the X
+   * freetype backend gives every glyph of a fixed-width TTF the
+   * face's max advance (a wide symbol), so Noto Sans Mono renders
+   * with huge inter-character gaps.  misc-fixed only comes in a few
+   * pixel sizes; map each size class to the nearest one that also
+   * has a bold variant. */
+  static int monodoc[3] = { 15, 13, 18 };
+  static int monoplain[3] = { 14, 13, 18 };
   char *family = sans ? "noto sans" : "noto serif";
   char name[256];
   XFontStruct *probe;
@@ -221,15 +228,15 @@ static int set_noto_fonts (mo_window *win, int sans, int sizeclass)
            family, weight, slant, px); \
   XmxSetArg (res, (XtArgVal)wrapFont (name));
 #define NOTOMONO(res, weight, px) \
-  sprintf (name, "-*-noto sans mono-%s-r-normal--%d-*-*-*-m-*-iso10646-1", \
+  sprintf (name, "-misc-fixed-%s-r-normal--%d-*-*-*-c-*-iso10646-1", \
            weight, px); \
   XmxSetArg (res, (XtArgVal)wrapFont (name));
 
   NOTO (WbNitalicFont, "medium", "i", doc[sizeclass])
   NOTO (WbNboldFont, "bold", "r", doc[sizeclass])
-  NOTOMONO (WbNfixedFont, "medium", doc[sizeclass])
-  NOTOMONO (WbNfixedboldFont, "bold", doc[sizeclass])
-  NOTOMONO (WbNfixeditalicFont, "medium", doc[sizeclass])
+  NOTOMONO (WbNfixedFont, "medium", monodoc[sizeclass])
+  NOTOMONO (WbNfixedboldFont, "bold", monodoc[sizeclass])
+  NOTOMONO (WbNfixeditalicFont, "medium", monodoc[sizeclass])
   NOTO (WbNheader1Font, "bold", "r", hdr[sizeclass][0])
   NOTO (WbNheader2Font, "bold", "r", hdr[sizeclass][1])
   NOTO (WbNheader3Font, "bold", "r", hdr[sizeclass][2])
@@ -237,9 +244,9 @@ static int set_noto_fonts (mo_window *win, int sans, int sizeclass)
   NOTO (WbNheader5Font, "bold", "r", hdr[sizeclass][4])
   NOTO (WbNheader6Font, "bold", "r", hdr[sizeclass][5])
   NOTO (WbNaddressFont, "medium", "i", doc[sizeclass])
-  NOTOMONO (WbNplainFont, "medium", plain[sizeclass])
-  NOTOMONO (WbNplainboldFont, "bold", plain[sizeclass])
-  NOTOMONO (WbNplainitalicFont, "medium", plain[sizeclass])
+  NOTOMONO (WbNplainFont, "medium", monoplain[sizeclass])
+  NOTOMONO (WbNplainboldFont, "bold", monoplain[sizeclass])
+  NOTOMONO (WbNplainitalicFont, "medium", monoplain[sizeclass])
   NOTO (WbNsupSubFont, "medium", "r", supsub[sizeclass])
 
 #undef NOTO

@@ -21,9 +21,11 @@ CANDIDATES="
 /usr/local/share/fonts/noto
 "
 
+# No mono faces here: the X freetype backend gives every glyph of a
+# fixed-width TTF the face's max advance, which makes text unreadably
+# wide.  Mosaic uses the misc-fixed iso10646 bitmaps for mono slots.
 WANTED="NotoSans-Regular.ttf NotoSans-Bold.ttf NotoSans-Italic.ttf \
-NotoSerif-Regular.ttf NotoSerif-Bold.ttf NotoSerif-Italic.ttf \
-NotoSansMono-Regular.ttf NotoSansMono-Bold.ttf"
+NotoSerif-Regular.ttf NotoSerif-Bold.ttf NotoSerif-Italic.ttf"
 
 command -v mkfontscale >/dev/null 2>&1 || {
     echo "error: mkfontscale not found (install xfonts-utils)" >&2
