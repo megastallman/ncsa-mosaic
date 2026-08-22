@@ -633,6 +633,8 @@ typedef enum
   mo_large_newcentury, mo_regular_newcentury, mo_small_newcentury,
   mo_large_lucidabright, mo_regular_lucidabright, mo_small_lucidabright,
   mo_regular_unicode,
+  mo_large_notoserif, mo_regular_notoserif, mo_small_notoserif,
+  mo_large_notosans, mo_regular_notosans, mo_small_notosans,
   mo_help_about, mo_help_onwindow, mo_help_onversion, mo_help_faq,
   mo_techsupport, mo_help_html, mo_help_url, mo_cc,
   mo_whats_new,

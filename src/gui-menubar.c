@@ -187,6 +187,69 @@ static long wrapFont (char *name)
   return ((long)font);
 }
 
+/*
+ * The Noto families are served as scalable core fonts (see
+ * mo_add_private_font_path and install-noto-fonts.sh); they carry
+ * full Unicode coverage with proportional glyphs, unlike the
+ * Latin-only adobe bitmap fonts.  Returns 0 when Noto is not in the
+ * server's font path, so the caller can fall back.
+ */
+static int set_noto_fonts (mo_window *win, int sans, int sizeclass)
+{
+  /* per size class (0 regular, 1 small, 2 large), mirroring Times */
+  static int doc[3] = { 17, 14, 20 };
+  static int hdr[3][6] = { { 24, 18, 17, 14, 12, 10 },
+                           { 18, 17, 14, 12, 10,  8 },
+                           { 25, 24, 20, 18, 17, 14 } };
+  static int plain[3] = { 14, 12, 18 };
+  static int supsub[3] = { 10, 8, 14 };
+  char *family = sans ? "noto sans" : "noto serif";
+  char name[256];
+  XFontStruct *probe;
+
+  sprintf (name,
+           "-*-%s-medium-r-normal--%d-*-*-*-p-*-iso10646-1",
+           family, doc[sizeclass]);
+  if ((probe = XLoadQueryFont (dsp, name)) == NULL)
+    {
+      return (0);
+    }
+  XmxSetArg (XtNfont, (XtArgVal)probe);
+
+#define NOTO(res, weight, slant, px) \
+  sprintf (name, "-*-%s-%s-%s-normal--%d-*-*-*-p-*-iso10646-1", \
+           family, weight, slant, px); \
+  XmxSetArg (res, (XtArgVal)wrapFont (name));
+#define NOTOMONO(res, weight, px) \
+  sprintf (name, "-*-noto sans mono-%s-r-normal--%d-*-*-*-m-*-iso10646-1", \
+           weight, px); \
+  XmxSetArg (res, (XtArgVal)wrapFont (name));
+
+  NOTO (WbNitalicFont, "medium", "i", doc[sizeclass])
+  NOTO (WbNboldFont, "bold", "r", doc[sizeclass])
+  NOTOMONO (WbNfixedFont, "medium", doc[sizeclass])
+  NOTOMONO (WbNfixedboldFont, "bold", doc[sizeclass])
+  NOTOMONO (WbNfixeditalicFont, "medium", doc[sizeclass])
+  NOTO (WbNheader1Font, "bold", "r", hdr[sizeclass][0])
+  NOTO (WbNheader2Font, "bold", "r", hdr[sizeclass][1])
+  NOTO (WbNheader3Font, "bold", "r", hdr[sizeclass][2])
+  NOTO (WbNheader4Font, "bold", "r", hdr[sizeclass][3])
+  NOTO (WbNheader5Font, "bold", "r", hdr[sizeclass][4])
+  NOTO (WbNheader6Font, "bold", "r", hdr[sizeclass][5])
+  NOTO (WbNaddressFont, "medium", "i", doc[sizeclass])
+  NOTOMONO (WbNplainFont, "medium", plain[sizeclass])
+  NOTOMONO (WbNplainboldFont, "bold", plain[sizeclass])
+  NOTOMONO (WbNplainitalicFont, "medium", plain[sizeclass])
+  NOTO (WbNsupSubFont, "medium", "r", supsub[sizeclass])
+
+#undef NOTO
+#undef NOTOMONO
+
+  XmxSetValues (win->scrolled_win);
+  win->font_family = sans ? 6 : 5;
+  return (1);
+}
+
 mo_status mo_set_fonts (mo_window *win, int size)
 {
   switch (size)
@@ -476,6 +539,33 @@ mo_status mo_set_fonts (mo_window *win, int size)
 
       XmxSetValues (win->scrolled_win);
       win->font_family = 4;
+      break;
+    case mo_regular_notoserif:
+    case mo_small_notoserif:
+    case mo_large_notoserif:
+    case mo_regular_notosans:
+    case mo_small_notosans:
+    case mo_large_notosans:
+      {
+        int sans = ((size == mo_regular_notosans)||
+                    (size == mo_small_notosans)||
+                    (size == mo_large_notosans));
+        int sizeclass = ((size == mo_small_notoserif)||
+                         (size == mo_small_notosans)) ? 1 :
+                        ((size == mo_large_notoserif)||
+                         (size == mo_large_notosans)) ? 2 : 0;
+
+        if (!set_noto_fonts (win, sans, sizeclass))
+          {
+            /*
+             * Noto is not in the server's font path (see
+             * install-noto-fonts.sh); quietly stay on Times.
+             */
+            return mo_set_fonts (win, (sizeclass == 1) ? mo_small_fonts :
+                                 (sizeclass == 2) ? mo_large_fonts :
+                                 mo_regular_fonts);
+          }
+      }
       break;
     }
 
@@ -912,6 +1002,12 @@ XmxCallback (menubar_cb)
       mo_set_fonts (win, i);
     break;
     case mo_regular_unicode:
+    case mo_regular_notoserif:
+    case mo_small_notoserif:
+    case mo_large_notoserif:
+    case mo_regular_notosans:
+    case mo_small_notosans:
+    case mo_large_notosans:
       mo_set_fonts (win, i);
     break;
     case mo_regular_fonts:
@@ -1568,7 +1664,7 @@ char buf[BUFSIZ];
 	NULL_MENUBAR()
 
 	/* Fonts Sub-Menu */
-	ALLOC_MENUBAR(fnts_menuspec,18);
+	ALLOC_MENUBAR(fnts_menuspec,26);
 	DEFINE_MENUBAR("<Times Regular" ,"T",menubar_cb,mo_regular_fonts,NULL)
 	DEFINE_MENUBAR("<Times Small" ,"S",menubar_cb,mo_small_fonts,NULL)
 	DEFINE_MENUBAR("<Times Large" ,"L",menubar_cb,mo_large_fonts,NULL)
@@ -1584,6 +1680,14 @@ char buf[BUFSIZ];
 	DEFINE_MENUBAR("<Lucida Bright Regular" ,"L",menubar_cb,mo_regular_lucidabright,NULL)
 	DEFINE_MENUBAR("<Lucida Bright Small" ,"u",menubar_cb,mo_small_lucidabright,NULL)
 	DEFINE_MENUBAR("<Lucida Bright Large" ,"i",menubar_cb,mo_large_lucidabright,NULL)
+	SPACER()
+	DEFINE_MENUBAR("<Noto Serif Regular" ,"o",menubar_cb,mo_regular_notoserif,NULL)
+	DEFINE_MENUBAR("<Noto Serif Small" ,"t",menubar_cb,mo_small_notoserif,NULL)
+	DEFINE_MENUBAR("<Noto Serif Large" ,"a",menubar_cb,mo_large_notoserif,NULL)
+	SPACER()
+	DEFINE_MENUBAR("<Noto Sans Regular" ,"s",menubar_cb,mo_regular_notosans,NULL)
+	DEFINE_MENUBAR("<Noto Sans Small" ,"m",menubar_cb,mo_small_notosans,NULL)
+	DEFINE_MENUBAR("<Noto Sans Large" ,"g",menubar_cb,mo_large_notosans,NULL)
 	SPACER()
 	DEFINE_MENUBAR("<Unicode Fixed" ,"U",menubar_cb,mo_regular_unicode,NULL)
 	NULL_MENUBAR()

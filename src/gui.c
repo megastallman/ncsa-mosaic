@@ -3250,6 +3250,17 @@ int mo_get_font_size_from_res(char *userfontstr,int *fontfamily)
       *fontfamily = 4;
       return mo_regular_unicode;
     }
+  if (strstr(lowerfontstr, "noto")!=NULL)
+    {
+      int sans = (strstr(lowerfontstr, "sans")!=NULL);
+
+      *fontfamily = sans ? 6 : 5;
+      if (strstr(lowerfontstr, "large")!=NULL)
+	return sans ? mo_large_notosans : mo_large_notoserif;
+      if (strstr(lowerfontstr, "small")!=NULL)
+	return sans ? mo_small_notosans : mo_small_notoserif;
+      return sans ? mo_regular_notosans : mo_regular_notoserif;
+    }
   if (strstr(lowerfontstr, "lucida")!=NULL)
     {
       *fontfamily = 3;
@@ -3963,6 +3974,70 @@ mo_status mo_open_initial_window (void)
  *   The main reason for this handler is to keep the application
  *   from crashing on BadAccess errors during calls to XFreeColors().
  ****************************************************************************/
+/* --------------------- mo_add_private_font_path ------------------------ */
+
+/*
+ * If the user has a private X font directory (built by
+ * install-noto-fonts.sh), append it to the server's font path so the
+ * scalable Noto core fonts become available to the Fonts menu.
+ * Best-effort: errors are trapped and ignored, since some servers
+ * refuse font path changes.
+ */
+
+static int font_path_error;
+
+static int trap_font_path_error (Display *d, XErrorEvent *event)
+{
+  font_path_error = 1;
+  return 0;
+}
+
+void mo_add_private_font_path (Display *d)
+{
+  char dir[512];
+  char probe[600];
+  char *home = getenv ("HOME");
+  char **path;
+  char **newpath;
+  int npaths, i;
+  FILE *fp;
+  int (*old_handler)(Display *, XErrorEvent *);
+
+  if (!home || (strlen (home) > 400))
+    return;
+  sprintf (dir, "%s/.mosaic/fonts", home);
+  sprintf (probe, "%s/fonts.dir", dir);
+  if ((fp = fopen (probe, "r")) == NULL)
+    return;
+  fclose (fp);
+
+  path = XGetFontPath (d, &npaths);
+  if (!path)
+    return;
+  for (i = 0; i < npaths; i++)
+    {
+      if (!strcmp (path[i], dir))
+        {
+          XFreeFontPath (path);
+          return;		/* already there */
+        }
+    }
+
+  newpath = (char **)malloc ((npaths + 1) * sizeof (char *));
+  for (i = 0; i < npaths; i++)
+    newpath[i] = path[i];
+  newpath[npaths] = dir;
+
+  font_path_error = 0;
+  old_handler = XSetErrorHandler (trap_font_path_error);
+  XSetFontPath (d, newpath, npaths + 1);
+  XSync (d, False);
+  XSetErrorHandler (old_handler);
+
+  free ((char *)newpath);
+  XFreeFontPath (path);
+}
+
 static int mo_error_handler (Display *dsp, XErrorEvent *event)
 {
   char buf[128];
@@ -4217,6 +4292,8 @@ void mo_do_gui (int argc, char **argv)
     Xmx_n=0;
 
     dsp = XtDisplay (toplevel);
+
+    mo_add_private_font_path (dsp);
 
         /* initialize the preferences stuff */
     successful = preferences_genesis();
