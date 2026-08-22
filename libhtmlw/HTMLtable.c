@@ -25,6 +25,8 @@ extern int htmlwTrace;
 /* Allocate a TableField and initialize to default values
  * return 0 on failure
  */
+static void TableDraw();
+
 static TableField *NewTableField()
 {
 TableField *tf;
@@ -51,6 +53,7 @@ TableField *tf;
 
 	tf->image = (ImageInfo *) 0;
 	tf->winfo = (WidgetInfo *) 0;
+	tf->table = (struct table_rec *) 0;
 
 	return(tf);
 }
@@ -451,10 +454,35 @@ int accumulateColWidth;
 	    for (x = 0; x < t->numColumns; x++ ) {
 
 		field = &(t->table[y * t->numColumns + x]);
+		field->minWidth = 0;
 		if (field->type == F_TEXT) {
+			char *wp, *ws, *we;
+			int ww;
+
 			field->maxWidth = XTextWidth(field->font,
 					field->text,strlen(field->text));
 			field->minHeight = FONTHEIGHT(field->font);
+			/* the narrowest this cell can wrap to is its
+			   widest single word */
+			wp = field->text;
+			while (*wp) {
+				GetWord(wp,&ws,&we);
+				if (we > ws) {
+					ww = XTextWidth(field->font, ws,
+							(int)(we - ws));
+					if (ww > field->minWidth) {
+						field->minWidth = ww;
+						}
+					}
+				wp = we;
+				}
+			}
+		else if (field->type == F_TABLE) {
+			/* a nested table was laid out by the recursive
+			   MakeTable call; it has fixed dimensions */
+			field->maxWidth = field->table->width;
+			field->minWidth = field->table->width;
+			field->minHeight = field->table->height;
 			}
 		else {
 			/* non text */
@@ -462,10 +490,7 @@ int accumulateColWidth;
 			}
 		maxWidthOfRow += field->maxWidth;
 
-		field->minWidth = 0; /* is minWidth needed? set 0 for now*/
 		field->maxHeight = 0;
-		/* if it's needed, set it to width of one char or maybe
-		   length of longest word in text */
 		minWidthOfRow += field->minWidth;
 		}
 	    /* save the length of the longest and shortest row */
@@ -591,6 +616,12 @@ int accumulateColWidth;
 				field = &(t->table[y*t->numColumns+x]);
 				field->colWidth = (int) (percentToShrink *
 				     ((float) CalculateMaxWidthOfColumn(t,x)));
+				/* never squeeze below the longest word
+				   (or a nested table); overflowing the
+				   page beats unreadable sliver columns */
+				if (field->colWidth < field->minWidth) {
+					field->colWidth = field->minWidth;
+					}
 				field->rowHeight = 0;
 				numAdjacent = TableHowManyConnectedHorizFields
 									(t,x,y);
@@ -614,6 +645,27 @@ int accumulateColWidth;
 					 hw->html.percent_vert_space,
 					&(field->formattedText),
 					&(field->numLines));
+
+				if (field->type == F_TABLE) {
+					/* a nested table keeps the size
+					   its own layout pass gave it */
+					field->rowHeight =
+						field->table->height +
+						2 * FIELD_BORDER_SPACE;
+					}
+
+				/* a nested table cannot be squeezed: it
+				   keeps its computed dimensions */
+				if (field->type == F_TABLE) {
+					field->rowHeight = field->table->height
+						+ 2 * FIELD_BORDER_SPACE;
+					if (field->colWidth <
+						field->table->width) {
+						field->colWidth =
+							field->table->width
+							+ 2 * FIELD_BORDER_SPACE;
+						}
+					}
 
 #ifndef DISABLE_TRACE
 				if (htmlwTrace) {
@@ -681,6 +733,17 @@ int accumulateColWidth;
 				t->table[y*t->numColumns+x].colWidth)?
 				maxWidthOfColumn:
 				t->table[y*t->numColumns+x].colWidth;
+			}
+		    /* a nested table cannot shrink: floor the column at
+		       its width, even if that overflows the page */
+		    for (y = 0; y < t->numRows; y++) {
+			field = &(t->table[y*t->numColumns+x]);
+			if ((field->type == F_TABLE)&&
+			    (maxWidthOfColumn < (field->table->width +
+						2 * FIELD_BORDER_SPACE))) {
+				maxWidthOfColumn = field->table->width +
+						2 * FIELD_BORDER_SPACE;
+				}
 			}
 		    /* make sure they are all the same */
 		    for (y = 0; y < t->numRows; y++) {
@@ -906,18 +969,52 @@ char *tptr;
 
 		if ((m->type == M_TABLE) && (!m->is_end) && (m != *mptr)) {
 			/*
-			 * A nested table.  This simple grid builder cannot
-			 * lay it out: the inner end tag would sever our
-			 * scan and the merged cells produce absurd column
-			 * counts.  Give up on this table; the caller falls
-			 * back to linear flow, and the innermost tables
-			 * (which have no nesting) get laid out for real.
+			 * A nested table: build it recursively and attach
+			 * it to the current cell.  The recursive call
+			 * consumes the marks up to the matching end tag,
+			 * so the inner rows never leak into this grid.
 			 */
-			free((char *)t);
-			return(0);
+			TableInfo *nested;
+			struct mark_up *before;
+
+			before = m;
+			nested = MakeTable(hw, &m, x, y);
+			if (nested != (TableInfo *) 0) {
+				if ((field != (TableField *) 0)&&
+					(field->table == (struct table_rec *) 0)) {
+					field->type = F_TABLE;
+					field->table = (struct table_rec *) nested;
+					}
+				/* with no enclosing cell (or a second
+				   table in one cell) the content is
+				   dropped -- same as any other markup
+				   this simple cell model cannot hold */
+				}
+			else if (m == before) {
+				/*
+				 * The recursion failed without consuming
+				 * anything (out of memory); skip the inner
+				 * marks so they cannot masquerade as our
+				 * own rows.
+				 */
+				int depth = 1;
+
+				m = m->next;
+				while ((m != (struct mark_up *) 0)&&(depth > 0)) {
+					if (m->type == M_TABLE) {
+						depth += (m->is_end) ? -1 : 1;
+						}
+					if (depth > 0) {
+						m = m->next;
+						}
+					}
+				}
+			if (m == (struct mark_up *) 0) {
+				break;
+				}
 			}
 
-		if (m->type == M_CAPTION) {
+		else if (m->type == M_CAPTION) {
 			if (ParseMarkTag(m->start,MT_CAPTION,"top")) {
 				t->captionAlignment = ALIGN_TOP;
 				}
@@ -1108,6 +1205,14 @@ int yy;
 		return -1;
 		}
 
+	if (field->type == F_TABLE) {
+		/* recursively draw a nested table inside this cell */
+		TableDraw(hw, eptr, (TableInfo *)field->table,
+			x + FIELD_BORDER_SPACE,
+			y + FIELD_BORDER_SPACE);
+		return 0;
+		}
+
 	if (field->type != F_TEXT) { /* routine only does text at this time */
 		return -1;
 		}
@@ -1221,74 +1326,49 @@ int x,y;
 
 
 
-/* display table */
-void TableRefresh(hw,eptr)
+/* draw a table (and, through TableDisplayField, any tables nested
+   in its cells) with its origin at x,y in view coordinates */
+static void TableDraw(hw,eptr,t,x,y)
 HTMLWidget hw;
 struct ele_rec *eptr;
+TableInfo *t;
+int x,y; 		/* table origin, already scroll adjusted */
 {
-int x,y; 		/* table origin */
 register int xx,yy;
 TableField *field;
 int vertMarker,horizMarker;
 int colWidth,rowHeight;
 int expandedWidth,expandedHeight;
 
-	if (eptr->table_data == NULL) {
+	if (t == NULL) {
 		return;
 		}
 
-	x = eptr->x;
-	y = eptr->y;
-
-	x = x - hw->html.scroll_x;
-	y = y - hw->html.scroll_y;
-
 	XSetLineAttributes(XtDisplay(hw),
 			   hw->html.drawGC,
-			   eptr->table_data->borders,
+			   t->borders,
 			   LineSolid,
 			   CapNotLast,
 			   JoinMiter);
 	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
 	XSetBackground(XtDisplay(hw), hw->html.drawGC, eptr->bg);
 
-	if (eptr->table_data->borders){
-	  /*
-		XDrawRectangle(XtDisplay(hw), XtWindow(hw->html.view),
-			hw->html.drawGC,
-			x+(eptr->table_data->borders/2),y+eptr->table_data->borders,
-			eptr->table_data->bwidth,
-			eptr->table_data->bheight);
-			*/
-/*
-			eptr->table_data->height-1);
-*/
-		}
-
-	field = eptr->table_data->table;
-	horizMarker = y+eptr->table_data->borders;
-	for (yy = 0; yy < eptr->table_data->numRows; yy++) {
-		vertMarker = x+(eptr->table_data->borders/2);
+	field = t->table;
+	horizMarker = y+t->borders;
+	for (yy = 0; yy < t->numRows; yy++) {
+		vertMarker = x+(t->borders/2);
 		rowHeight = field->rowHeight;
-		for (xx = 0; xx < eptr->table_data->numColumns; xx++) {
+		for (xx = 0; xx < t->numColumns; xx++) {
 			colWidth = field->colWidth;
 
 			/* draw field borders */
-			if (eptr->table_data->borders){
+			if (t->borders){
 			    if (!field->contVert) { /* draw above line */
 				XDrawLine(XtDisplay(hw),
 					XtWindow(hw->html.view),
                         		hw->html.drawGC,
-					/*hw->manager.bottom_shadow_GC,*/
 					vertMarker, horizMarker,
 					vertMarker + colWidth, horizMarker);
-/*
-				XDrawLine(XtDisplay(hw),
-					XtWindow(hw->html.view),
-					hw->manager.top_shadow_GC,
-					vertMarker, horizMarker+1,
-					vertMarker + colWidth, horizMarker+1);
-*/
 				}
 			    if (!field->contHoriz) { /* draw left side*/
 				XDrawLine(XtDisplay(hw),
@@ -1298,7 +1378,7 @@ int expandedWidth,expandedHeight;
 					vertMarker, horizMarker + rowHeight);
 				}
 			    }
-			TableGetExpandedDimensions(eptr->table_data,
+			TableGetExpandedDimensions(t,
 					xx,yy,&expandedWidth,&expandedHeight);
 			/* fill in field */
 			TableDisplayField(hw,
@@ -1308,6 +1388,21 @@ int expandedWidth,expandedHeight;
 					  horizMarker,
 					  expandedWidth,
 					  expandedHeight);
+
+			/* a nested TableDraw may have changed the line
+			   width; restore ours for the remaining borders */
+			if (field->type == F_TABLE) {
+				XSetLineAttributes(XtDisplay(hw),
+						   hw->html.drawGC,
+						   t->borders,
+						   LineSolid,
+						   CapNotLast,
+						   JoinMiter);
+				XSetForeground(XtDisplay(hw),
+						hw->html.drawGC, eptr->fg);
+				XSetBackground(XtDisplay(hw),
+						hw->html.drawGC, eptr->bg);
+				}
 
 			vertMarker += colWidth;
 			field++;
@@ -1322,4 +1417,19 @@ int expandedWidth,expandedHeight;
 			   LineSolid,
 			   CapNotLast,
 			   JoinMiter);
+}
+
+
+/* display table */
+void TableRefresh(hw,eptr)
+HTMLWidget hw;
+struct ele_rec *eptr;
+{
+	if (eptr->table_data == NULL) {
+		return;
+		}
+
+	TableDraw(hw, eptr, eptr->table_data,
+		eptr->x - hw->html.scroll_x,
+		eptr->y - hw->html.scroll_y);
 }

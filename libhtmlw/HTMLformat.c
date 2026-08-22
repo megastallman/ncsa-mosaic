@@ -5205,7 +5205,7 @@ FormatChunk(hw, x, y)
 		 * Save last non-text mark
 		 */
 		 /* DDT: why is this here? it's not used anywhere? */
-		if (mptr->type != M_NONE)
+		if ((mptr != NULL)&&(mptr->type != M_NONE))
 		{
 			Last = mptr;
 		}

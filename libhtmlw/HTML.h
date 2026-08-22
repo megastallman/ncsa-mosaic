@@ -244,7 +244,7 @@ typedef struct wid_rec {
 } WidgetInfo;
 
 
-typedef enum { F_NONE, F_TEXT, F_IMAGE, F_WIDGET} FieldType;
+typedef enum { F_NONE, F_TEXT, F_IMAGE, F_WIDGET, F_TABLE} FieldType;
 
 typedef struct table_field {
         int colSpan;            /* number of cells this spans vertically */
@@ -269,6 +269,7 @@ typedef struct table_field {
 
 	ImageInfo	*image;
 	WidgetInfo	*winfo;
+	struct table_rec *table;	/* F_TABLE: a nested table */
 } TableField;
 
 typedef struct table_rec {
