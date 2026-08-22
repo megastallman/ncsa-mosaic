@@ -450,6 +450,33 @@ mo_status mo_set_fonts (mo_window *win, int size)
       XmxSetValues (win->scrolled_win);
       win->font_family = 3;
       break;
+    case mo_regular_unicode:
+      /*
+       * misc-fixed in its iso10646-1 encoding is the one X core font
+       * family with wide Unicode coverage (Cyrillic, Greek, ...);
+       * everything else out there only carries Latin glyphs.
+       */
+      XmxSetArg (XtNfont, (XtArgVal)wrapFont("-misc-fixed-medium-r-normal-*-15-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNitalicFont, (XtArgVal)wrapFont("-misc-fixed-medium-o-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNboldFont, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-15-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNfixedFont, (XtArgVal)wrapFont("-misc-fixed-medium-r-normal-*-15-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNfixedboldFont, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-15-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNfixeditalicFont, (XtArgVal)wrapFont("-misc-fixed-medium-o-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader1Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-18-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader2Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-18-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader3Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-15-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader4Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-14-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader5Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNheader6Font, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNaddressFont, (XtArgVal)wrapFont("-misc-fixed-medium-o-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNplainFont, (XtArgVal)wrapFont("-misc-fixed-medium-r-normal-*-14-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNplainboldFont, (XtArgVal)wrapFont("-misc-fixed-bold-r-normal-*-14-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNplainitalicFont, (XtArgVal)wrapFont("-misc-fixed-medium-o-normal-*-13-*-*-*-*-*-iso10646-1"));
+      XmxSetArg (WbNsupSubFont, (XtArgVal)wrapFont("-misc-fixed-medium-r-normal-*-10-*-*-*-*-*-iso10646-1"));
+
+      XmxSetValues (win->scrolled_win);
+      win->font_family = 4;
+      break;
     }
 
   XmxRSetToggleState (win->menubar, win->font_size, XmxNotSet);
@@ -882,6 +909,9 @@ XmxCallback (menubar_cb)
       break;
     case mo_large_fonts:
       if (cci_event) MoCCISendEventOutput(OPTIONS_FONTS_TL);
+      mo_set_fonts (win, i);
+    break;
+    case mo_regular_unicode:
       mo_set_fonts (win, i);
     break;
     case mo_regular_fonts:
@@ -1538,7 +1568,7 @@ char buf[BUFSIZ];
 	NULL_MENUBAR()
 
 	/* Fonts Sub-Menu */
-	ALLOC_MENUBAR(fnts_menuspec,16);
+	ALLOC_MENUBAR(fnts_menuspec,18);
 	DEFINE_MENUBAR("<Times Regular" ,"T",menubar_cb,mo_regular_fonts,NULL)
 	DEFINE_MENUBAR("<Times Small" ,"S",menubar_cb,mo_small_fonts,NULL)
 	DEFINE_MENUBAR("<Times Large" ,"L",menubar_cb,mo_large_fonts,NULL)
@@ -1554,6 +1584,8 @@ char buf[BUFSIZ];
 	DEFINE_MENUBAR("<Lucida Bright Regular" ,"L",menubar_cb,mo_regular_lucidabright,NULL)
 	DEFINE_MENUBAR("<Lucida Bright Small" ,"u",menubar_cb,mo_small_lucidabright,NULL)
 	DEFINE_MENUBAR("<Lucida Bright Large" ,"i",menubar_cb,mo_large_lucidabright,NULL)
+	SPACER()
+	DEFINE_MENUBAR("<Unicode Fixed" ,"U",menubar_cb,mo_regular_unicode,NULL)
 	NULL_MENUBAR()
 
 	/* Underline Sub-Menu */

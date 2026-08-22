@@ -32,6 +32,10 @@ extern int www2Trace;
 /* This is UGLY. */
 char *redirecting_url = NULL;
 
+/* The charset parameter of the last Content-Type header seen, for
+   the browser to convert the document to UTF-8 (src/mo-www.c). */
+char *HTMIMECharset = NULL;
+
 /* This is almost as ugly. */
 extern int loading_length;
 extern int noLength;
@@ -558,9 +562,12 @@ PRIVATE void HTMIME_put_character ARGS2(HTStream *, me, char, c)
       /* Fall through to store first character */
 
     case GET_VALUE:
-      if (WHITE(c))
+      if (WHITE(c) &&
+          ((me->field != CONTENT_TYPE)||(c == '\n')||(c == '\r')))
         {
-          /* End of field */
+          /* End of field.  Content-Type is special-cased so its
+             parameters survive the space after the semicolon in
+             "text/html; charset=..." */
           *me->value_pointer = 0;
           switch (me->field)
             {
@@ -573,7 +580,39 @@ PRIVATE void HTMIME_put_character ARGS2(HTStream *, me, char, c)
               {
                 char *tmp;
 				// SAM
-				if((tmp = strchr(me->value, ';'))) *tmp = '\0';
+				if((tmp = strchr(me->value, ';'))) {
+					char *param;
+
+					*tmp = '\0';
+					/* capture a charset= parameter */
+					for (param = tmp + 1; *param; param++) {
+						if (my_strncasecmp(param, "charset", 7) == 0) {
+							char *cs, *cse, csave;
+
+							cs = param + 7;
+							while ((*cs == ' ')||(*cs == '\t')||
+							       (*cs == '='))
+								cs++;
+							if ((*cs == '\"')||(*cs == '\''))
+								cs++;
+							cse = cs;
+							while ((*cse != '\0')&&(*cse != ';')&&
+							       (*cse != '\"')&&(*cse != '\'')&&
+							       (*cse != ' ')&&(*cse != '\t')&&
+							       (*cse != '\r')&&(*cse != '\n'))
+								cse++;
+							csave = *cse;
+							*cse = '\0';
+							if (*cs) {
+								if (HTMIMECharset)
+									free(HTMIMECharset);
+								HTMIMECharset = strdup(cs);
+							}
+							*cse = csave;
+							break;
+						}
+					}
+				}
 				// SAM
                 for (tmp = me->value; *tmp; tmp++)
                   *tmp = TOLOWER (*tmp);
@@ -998,6 +1037,13 @@ PUBLIC HTStream* HTMIMEConvert ARGS5(
     if (www2Trace)
       fprintf (stderr, "[HTMIMEConvert] HELLO!\n");
 #endif
+
+    /* a new response begins: forget the previous document's charset */
+    if (HTMIMECharset)
+      {
+        free(HTMIMECharset);
+        HTMIMECharset = NULL;
+      }
 
     me->sink = sink;
     me->anchor = anchor;

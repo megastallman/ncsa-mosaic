@@ -323,6 +323,141 @@ static char *hack_htmlsrc (void)
 
 
 /****************************************************************************
+ * Charset handling: documents get converted to UTF-8 (the only
+ * encoding libhtmlw understands beyond ASCII) when the server's
+ * Content-Type header or a meta tag declares a different charset.
+ ****************************************************************************/
+
+#include <iconv.h>
+#include <errno.h>
+
+extern char *HTMIMECharset;  /* from libwww2/HTMIME.c */
+
+/* Scan the head of the raw document for charset=... inside a meta
+   tag; charset names are always ASCII, so scanning before conversion
+   is safe.  Returns a malloc'd name or NULL. */
+static char *grab_meta_charset (char *txt)
+{
+  char *p;
+  int limit;
+
+  if (!txt)
+    return NULL;
+
+  limit = 4096;
+  for (p = txt; *p && limit > 0; p++, limit--)
+    {
+      if ((*p == 'c' || *p == 'C') &&
+          !my_strncasecmp (p, "charset", 7))
+        {
+          char *cs, *cse, *name;
+
+          cs = p + 7;
+          while (*cs == ' ' || *cs == '\t' || *cs == '=')
+            cs++;
+          if (*cs == '"' || *cs == '\'')
+            cs++;
+          cse = cs;
+          while (*cse && *cse != ';' && *cse != '"' && *cse != '\'' &&
+                 *cse != '>' && *cse != '/' &&
+                 !isspace ((unsigned char)*cse))
+            cse++;
+          if (cse == cs)
+            return NULL;
+          name = (char *)malloc (cse - cs + 1);
+          strncpy (name, cs, cse - cs);
+          name[cse - cs] = '\0';
+          return name;
+        }
+    }
+  return NULL;
+}
+
+/* Convert txt to UTF-8 according to the declared charset.  Returns a
+   malloc'd converted copy, or NULL when no conversion is needed or
+   possible (caller keeps using the original). */
+static char *convert_charset_to_utf8 (char *txt)
+{
+  char *cs;
+  iconv_t cd;
+  char *inptr, *outbuf, *outptr;
+  size_t inleft, outsize, outleft;
+
+  if (!txt)
+    return NULL;
+
+  if (HTMIMECharset && *HTMIMECharset)
+    cs = strdup (HTMIMECharset);
+  else
+    cs = grab_meta_charset (txt);
+
+  if (!cs)
+    return NULL;
+
+  if (!my_strcasecmp (cs, "utf-8") || !my_strcasecmp (cs, "utf8") ||
+      !my_strcasecmp (cs, "us-ascii") || !my_strcasecmp (cs, "ascii"))
+    {
+      free (cs);
+      return NULL;
+    }
+
+  cd = iconv_open ("UTF-8", cs);
+  if (cd == (iconv_t)-1)
+    {
+#ifndef DISABLE_TRACE
+      if (srcTrace)
+        fprintf (stderr, "charset: iconv can't convert from '%s'\n", cs);
+#endif
+      free (cs);
+      return NULL;
+    }
+#ifndef DISABLE_TRACE
+  if (srcTrace)
+    fprintf (stderr, "charset: converting document from '%s'\n", cs);
+#endif
+  free (cs);
+
+  inptr = txt;
+  inleft = strlen (txt);
+  outsize = inleft * 2 + 64;
+  outbuf = (char *)malloc (outsize);
+  outptr = outbuf;
+  outleft = outsize - 1;
+
+  while (inleft > 0)
+    {
+      if (iconv (cd, &inptr, &inleft, &outptr, &outleft) == (size_t)-1)
+        {
+          if (errno == E2BIG)
+            {
+              size_t used = outptr - outbuf;
+
+              outsize *= 2;
+              outbuf = (char *)realloc (outbuf, outsize);
+              outptr = outbuf + used;
+              outleft = outsize - used - 1;
+            }
+          else
+            {
+              /* bad byte: emit '?' and step over it */
+              if (outleft > 0)
+                {
+                  *outptr++ = '?';
+                  outleft--;
+                }
+              inptr++;
+              inleft--;
+            }
+        }
+    }
+  *outptr = '\0';
+  iconv_close (cd);
+
+  return outbuf;
+}
+
+
+/****************************************************************************
  * name:    doit (PRIVATE)
  * purpose: Given a URL, go fetch information.
  * inputs:
@@ -371,7 +506,19 @@ static char *doit (char *url, char **texthead)
     {
       char *txt = hack_htmlsrc ();
       if (HTMainText)
-        *texthead = HTMainText->htmlSrcHead;
+        {
+          char *conv = convert_charset_to_utf8 (txt);
+
+          if (conv)
+            {
+              free (HTMainText->htmlSrcHead);
+              HTMainText->htmlSrc = conv;
+              HTMainText->htmlSrcHead = conv;
+              HTMainText->srclen = strlen (conv);
+              txt = conv;
+            }
+          *texthead = HTMainText->htmlSrcHead;
+        }
       else
         *texthead = NULL;
       return txt;
@@ -392,6 +539,16 @@ static char *doit (char *url, char **texthead)
    */
    if (HTMainText) {
 	char *txt = hack_htmlsrc();
+	char *conv = convert_charset_to_utf8 (txt);
+
+	if (conv)
+	  {
+	    free (HTMainText->htmlSrcHead);
+	    HTMainText->htmlSrc = conv;
+	    HTMainText->htmlSrcHead = conv;
+	    HTMainText->srclen = strlen (conv);
+	    txt = conv;
+	  }
 	*texthead = HTMainText->htmlSrcHead;
 
 	if (cci_get){

@@ -3244,6 +3244,12 @@ int mo_get_font_size_from_res(char *userfontstr,int *fontfamily)
 	return mo_small_newcentury;
       return mo_regular_newcentury;
     }
+  if ((strstr(lowerfontstr, "unicode")!=NULL)||
+      (strstr(lowerfontstr, "fixed")!=NULL))
+    {
+      *fontfamily = 4;
+      return mo_regular_unicode;
+    }
   if (strstr(lowerfontstr, "lucida")!=NULL)
     {
       *fontfamily = 3;
