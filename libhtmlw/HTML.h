@@ -246,11 +246,14 @@ typedef struct wid_rec {
 
 typedef enum { F_NONE, F_TEXT, F_IMAGE, F_WIDGET, F_TABLE} FieldType;
 
-/* one stretch of cell text sharing an anchor and a font */
+/* one inline item of cell content: a stretch of text sharing an
+   anchor and a font, OR an image, OR a form widget */
 typedef struct cell_run {
-	char	*text;		/* whitespace-flattened text */
+	char	*text;		/* whitespace-flattened text, or NULL */
 	char	*href;		/* the anchor it sits in, or NULL */
 	XFontStruct *font;	/* the font its inline markup asked for */
+	ImageInfo *image;	/* an inline image item */
+	WidgetInfo *winfo;	/* an inline form widget item */
 } CellRun;
 
 typedef struct table_field {
@@ -279,8 +282,6 @@ typedef struct table_field {
 	int		numLines;	/* for formatted text */
 
 	ImageInfo	*image;
-	WidgetInfo	**winfos;	/* F_WIDGET: form widgets in cell */
-	int		winfo_cnt;
 	struct table_rec *table;	/* F_TABLE: a nested table */
 } TableField;
 

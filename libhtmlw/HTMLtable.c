@@ -34,25 +34,24 @@ extern WidgetInfo *TableMakeSelectWidget();
 extern WidgetInfo *TableMakeTextAreaWidget();
 extern WidgetInfo *TableMakeButtonWidget();
 
-/* total size of a cell full of form widgets, laid out left to right
-   with a gap between them */
-static void TableWidgetCellSize(field, wsum, hmax)
+/* append an image or widget item to a cell's run list */
+static void TableAddRunItem(field, href, image, winfo)
 TableField *field;
-int *wsum, *hmax;
+char *href;
+ImageInfo *image;
+WidgetInfo *winfo;
 {
-int wi;
+CellRun *lr;
 
-	*wsum = 0;
-	*hmax = 0;
-	for (wi = 0; wi < field->winfo_cnt; wi++) {
-		*wsum += field->winfos[wi]->width;
-		if (wi > 0) {
-			*wsum += FIELD_BORDER_SPACE;
-			}
-		if (field->winfos[wi]->height > *hmax) {
-			*hmax = field->winfos[wi]->height;
-			}
-		}
+	field->runs = (CellRun *)realloc(field->runs,
+		(field->run_cnt + 1) * sizeof(CellRun));
+	lr = &field->runs[field->run_cnt];
+	lr->text = (char *) 0;
+	lr->href = (href != (char *) 0) ? strdup(href) : (char *) 0;
+	lr->font = (XFontStruct *) 0;
+	lr->image = image;
+	lr->winfo = winfo;
+	field->run_cnt++;
 }
 
 static TableField *NewTableField()
@@ -83,8 +82,6 @@ TableField *tf;
 	tf->numLines = 0;
 
 	tf->image = (ImageInfo *) 0;
-	tf->winfos = (WidgetInfo **) 0;
-	tf->winfo_cnt = 0;
 	tf->table = (struct table_rec *) 0;
 
 	return(tf);
@@ -494,16 +491,16 @@ int mode;
 int ex, ey;
 int *retheight;
 int *retwidth;		/* widest flowed line (or NULL) */
-int *retminword;	/* widest single word (or NULL) */
+int *retminword;	/* widest single word/item (or NULL) */
 {
 struct cell_word *words;
 int nwords, wcap;
-int *linew;
+int *linew, *lineasc, *linedesc, *liney;
 int i, j, r;
-int lineHeight, baseLine;
 int cx, line, nlines, totalh, starty, maxlinew;
 char *result;
 XFontStruct *rfont;
+CellRun *run;
 
 	if (retheight != (int *) 0) {
 		*retheight = 0;
@@ -521,38 +518,54 @@ XFontStruct *rfont;
 		width = 16;
 		}
 
-	/* split every run into words, measured with the run's font */
+	/* split text runs into words; an image or widget item is one
+	   pseudo-word of its own size */
 	words = (struct cell_word *) 0;
 	nwords = 0;
 	wcap = 0;
 	for (r = 0; r < field->run_cnt; r++) {
-		char *p = field->runs[r].text;
-		char *ws, *we;
+		run = &field->runs[r];
+		if (run->text != (char *) 0) {
+			char *p = run->text;
+			char *ws, *we;
 
-		rfont = (field->runs[r].font != (XFontStruct *) 0) ?
-			field->runs[r].font : field->font;
-		while ((p != (char *) 0)&&(*p != '\0')) {
-			GetWord(p, &ws, &we);
-			if (we == ws) {
-				break;
+			rfont = (run->font != (XFontStruct *) 0) ?
+				run->font : field->font;
+			while (*p != '\0') {
+				GetWord(p, &ws, &we);
+				if (we == ws) {
+					break;
+					}
+				if (nwords >= wcap) {
+					wcap = wcap ? wcap * 2 : 32;
+					words = (struct cell_word *)realloc(
+					    (char *)words,
+					    wcap * sizeof(struct cell_word));
+					}
+				words[nwords].p = ws;
+				words[nwords].len = (int)(we - ws);
+				words[nwords].width = XTextWidth(rfont,
+					ws, words[nwords].len);
+				words[nwords].run = r;
+				nwords++;
+				p = we;
 				}
+			}
+		else if ((run->image != (ImageInfo *) 0)||
+			 (run->winfo != (WidgetInfo *) 0)) {
 			if (nwords >= wcap) {
 				wcap = wcap ? wcap * 2 : 32;
 				words = (struct cell_word *)realloc(
-					(char *)words,
-					wcap * sizeof(struct cell_word));
+				    (char *)words,
+				    wcap * sizeof(struct cell_word));
 				}
-			words[nwords].p = ws;
-			words[nwords].len = (int)(we - ws);
-			words[nwords].width = XTextWidth(rfont,
-				ws, words[nwords].len);
+			words[nwords].p = (char *) 0;
+			words[nwords].len = 0;
+			words[nwords].width =
+				(run->image != (ImageInfo *) 0) ?
+				run->image->width : run->winfo->width;
 			words[nwords].run = r;
-			if ((retminword != (int *) 0)&&
-			    (words[nwords].width > *retminword)) {
-				*retminword = words[nwords].width;
-				}
 			nwords++;
-			p = we;
 			}
 		}
 	if (nwords == 0) {
@@ -560,20 +573,6 @@ XFontStruct *rfont;
 			free((char *)words);
 			}
 		return((char *) 0);
-		}
-
-	/* line metrics: mixed fonts share a baseline */
-	lineHeight = 0;
-	baseLine = 0;
-	for (r = 0; r < field->run_cnt; r++) {
-		rfont = (field->runs[r].font != (XFontStruct *) 0) ?
-			field->runs[r].font : field->font;
-		if (rfont->max_bounds.ascent > baseLine) {
-			baseLine = rfont->max_bounds.ascent;
-			}
-		if (FONTHEIGHT(rfont) > lineHeight) {
-			lineHeight = FONTHEIGHT(rfont);
-			}
 		}
 
 	/* greedy line breaking; inter-word gaps use the incoming
@@ -584,9 +583,9 @@ XFontStruct *rfont;
 	for (i = 0; i < nwords; i++) {
 		int sp;
 
-		rfont = (field->runs[words[i].run].font !=
-				(XFontStruct *) 0) ?
-			field->runs[words[i].run].font : field->font;
+		run = &field->runs[words[i].run];
+		rfont = (run->font != (XFontStruct *) 0) ?
+			run->font : field->font;
 		sp = XTextWidth(rfont, " ", 1);
 		if ((cx > 0)&&
 		    ((cx + sp + words[i].width) > width)) {
@@ -599,9 +598,57 @@ XFontStruct *rfont;
 		if (cx > maxlinew) {
 			maxlinew = cx;
 			}
+		if ((retminword != (int *) 0)&&
+		    (words[i].width > *retminword)) {
+			*retminword = words[i].width;
+			}
 		}
 	nlines = line + 1;
-	totalh = nlines * lineHeight;
+
+	/* per-line metrics: text words contribute their font's ascent
+	   and descent, items sit with their bottom on the baseline */
+	lineasc = (int *)malloc(nlines * sizeof(int));
+	linedesc = (int *)malloc(nlines * sizeof(int));
+	liney = (int *)malloc(nlines * sizeof(int));
+	linew = (int *)malloc(nlines * sizeof(int));
+	for (i = 0; i < nlines; i++) {
+		lineasc[i] = 0;
+		linedesc[i] = 0;
+		linew[i] = 0;
+		}
+	for (i = 0; i < nwords; i++) {
+		int ln = words[i].ln;
+
+		run = &field->runs[words[i].run];
+		if (run->text != (char *) 0) {
+			rfont = (run->font != (XFontStruct *) 0) ?
+				run->font : field->font;
+			if (rfont->max_bounds.ascent > lineasc[ln]) {
+				lineasc[ln] = rfont->max_bounds.ascent;
+				}
+			if (rfont->max_bounds.descent > linedesc[ln]) {
+				linedesc[ln] = rfont->max_bounds.descent;
+				}
+			}
+		else {
+			int ih;
+
+			ih = (run->image != (ImageInfo *) 0) ?
+				run->image->height : run->winfo->height;
+			if (ih > lineasc[ln]) {
+				lineasc[ln] = ih;
+				}
+			}
+		if ((words[i].lx + words[i].width) > linew[ln]) {
+			linew[ln] = words[i].lx + words[i].width;
+			}
+		}
+	totalh = 0;
+	for (i = 0; i < nlines; i++) {
+		liney[i] = totalh;
+		totalh += lineasc[i] + linedesc[i];
+		}
+
 	if (retheight != (int *) 0) {
 		*retheight = totalh;
 		}
@@ -610,16 +657,11 @@ XFontStruct *rfont;
 		}
 	if (mode == CELLFLOW_MEASURE) {
 		free((char *)words);
+		free((char *)lineasc);
+		free((char *)linedesc);
+		free((char *)liney);
+		free((char *)linew);
 		return((char *) 0);
-		}
-
-	/* each line's used width, for center/right alignment */
-	linew = (int *)malloc(nlines * sizeof(int));
-	for (i = 0; i < nlines; i++) {
-		linew[i] = 0;
-		}
-	for (i = 0; i < nwords; i++) {
-		linew[words[i].ln] = words[i].lx + words[i].width;
 		}
 
 	starty = y + (height - totalh) / 2;
@@ -627,24 +669,30 @@ XFontStruct *rfont;
 		starty = y;
 		}
 
-	/* walk segments: consecutive words on one line in one run */
+	/* walk segments: consecutive text words on one line in one run;
+	   an item is a segment of its own */
 	result = (char *) 0;
 	for (i = 0; i < nwords; ) {
-		int sx, sy, sw, off;
-		CellRun *run;
+		int sx, sy, sw, off, ln;
 
-		j = i;
-		while ((j < nwords)&&(words[j].ln == words[i].ln)&&
-			(words[j].run == words[i].run)) {
-			j++;
-			}
 		run = &field->runs[words[i].run];
+		ln = words[i].ln;
+		j = i;
+		if (run->text != (char *) 0) {
+			while ((j < nwords)&&(words[j].ln == ln)&&
+				(words[j].run == words[i].run)) {
+				j++;
+				}
+			}
+		else {
+			j = i + 1;
+			}
 
 		if (field->alignment == ALIGN_CENTER) {
-			off = (width - linew[words[i].ln]) / 2;
+			off = (width - linew[ln]) / 2;
 			}
 		else if (field->alignment == ALIGN_RIGHT) {
-			off = width - linew[words[i].ln];
+			off = width - linew[ln];
 			}
 		else {
 			off = 0;
@@ -653,14 +701,50 @@ XFontStruct *rfont;
 			off = 0;
 			}
 		sx = x + off + words[i].lx;
-		sy = starty + words[i].ln * lineHeight;
+		sy = starty + liney[ln];
 		sw = words[j-1].lx + words[j-1].width - words[i].lx;
 
 		if (mode == CELLFLOW_HIT) {
-			if ((ex >= sx)&&(ex < (sx + sw))&&
-			    (ey >= sy)&&(ey < (sy + lineHeight))) {
+			if ((run->winfo == (WidgetInfo *) 0)&&
+			    (ex >= sx)&&(ex < (sx + sw))&&
+			    (ey >= sy)&&
+			    (ey < (sy + lineasc[ln] + linedesc[ln]))) {
 				result = run->href;
 				break;
+				}
+			}
+		else if (run->image != (ImageInfo *) 0) {
+			ImageInfo *pic = run->image;
+
+			if ((pic->image == None)&&
+			    (pic->image_data != NULL)) {
+				pic->image = InfoToImage(hw, pic, 0);
+				}
+			if (pic->image != None) {
+				XCopyArea(XtDisplay(hw), pic->image,
+					XtWindow(hw->html.view),
+					hw->html.drawGC,
+					0, 0, pic->width, pic->height,
+					sx,
+					sy + lineasc[ln] - pic->height);
+				}
+			}
+		else if (run->winfo != (WidgetInfo *) 0) {
+			WidgetInfo *wp = run->winfo;
+			int wty;
+
+			if (wp->w != NULL) {
+				wty = sy + lineasc[ln] - wp->height;
+				/* doc coordinates keep ScrollWidgets
+				   honest when the page scrolls */
+				wp->x = sx + hw->html.scroll_x;
+				wp->y = wty + hw->html.scroll_y;
+				XtMoveWidget(wp->w, sx, wty);
+				wp->seeable = 1;
+				if (wp->mapped == False) {
+					wp->mapped = True;
+					XtSetMappedWhenManaged(wp->w, True);
+					}
 				}
 			}
 		else {
@@ -705,7 +789,7 @@ XFontStruct *rfont;
 				sx,
 				/* top y such that mixed fonts share
 				   the line's baseline */
-				sy + (baseLine -
+				sy + (lineasc[ln] -
 					rfont->max_bounds.ascent),
 				XmStringWidth(tftd, ttd),
 				XmALIGNMENT_BEGINNING,
@@ -716,8 +800,8 @@ XFontStruct *rfont;
 				XDrawLine(XtDisplay(hw),
 					XtWindow(hw->html.view),
 					hw->html.drawGC,
-					sx, sy + baseLine + 1,
-					sx + sw, sy + baseLine + 1);
+					sx, sy + lineasc[ln] + 1,
+					sx + sw, sy + lineasc[ln] + 1);
 				}
 			free(seg);
 			}
@@ -725,6 +809,9 @@ XFontStruct *rfont;
 		i = j;
 		}
 
+	free((char *)lineasc);
+	free((char *)linedesc);
+	free((char *)liney);
 	free((char *)linew);
 	free((char *)words);
 	return(result);
@@ -779,20 +866,6 @@ int accumulateColWidth;
 			field->maxWidth = field->table->width;
 			field->minWidth = field->table->width;
 			field->minHeight = field->table->height;
-			}
-		else if (field->type == F_IMAGE) {
-			/* an image has fixed dimensions too */
-			field->maxWidth = field->image->width;
-			field->minWidth = field->image->width;
-			field->minHeight = field->image->height;
-			}
-		else if (field->type == F_WIDGET) {
-			int wsum, hmax;
-
-			TableWidgetCellSize(field, &wsum, &hmax);
-			field->maxWidth = wsum;
-			field->minWidth = wsum;
-			field->minHeight = hmax;
 			}
 		else {
 			/* non text */
@@ -943,9 +1016,10 @@ int accumulateColWidth;
 						2 * FIELD_BORDER_SPACE;
 					}
 
-				/* fixed-size contents (nested tables and
-				   images) cannot be squeezed: they keep
-				   the dimensions layout gave them */
+				/* a nested table is fixed-size content: it
+				   keeps the dimensions layout gave it
+				   (images and widgets are flow items now,
+				   floored through minWidth) */
 				if (field->type == F_TABLE) {
 					field->rowHeight = field->table->height
 						+ 2 * FIELD_BORDER_SPACE;
@@ -954,31 +1028,6 @@ int accumulateColWidth;
 						 2 * FIELD_BORDER_SPACE)) {
 						field->colWidth =
 							field->table->width
-							+ 2 * FIELD_BORDER_SPACE;
-						}
-					}
-				else if (field->type == F_IMAGE) {
-					field->rowHeight = field->image->height
-						+ 2 * FIELD_BORDER_SPACE;
-					if (field->colWidth <
-						(field->image->width +
-						 2 * FIELD_BORDER_SPACE)) {
-						field->colWidth =
-							field->image->width
-							+ 2 * FIELD_BORDER_SPACE;
-						}
-					}
-				else if (field->type == F_WIDGET) {
-					int wsum, hmax;
-
-					TableWidgetCellSize(field,
-						&wsum, &hmax);
-					field->rowHeight = hmax
-						+ 2 * FIELD_BORDER_SPACE;
-					if (field->colWidth <
-						(wsum +
-						 2 * FIELD_BORDER_SPACE)) {
-						field->colWidth = wsum
 							+ 2 * FIELD_BORDER_SPACE;
 						}
 					}
@@ -1059,14 +1108,6 @@ int accumulateColWidth;
 			fw = 0;
 			if (field->type == F_TABLE) {
 				fw = field->table->width;
-				}
-			else if (field->type == F_IMAGE) {
-				fw = field->image->width;
-				}
-			else if (field->type == F_WIDGET) {
-				int hmax;
-
-				TableWidgetCellSize(field, &fw, &hmax);
 				}
 			if ((fw > 0)&&
 			    (maxWidthOfColumn < (fw +
@@ -1295,6 +1336,8 @@ int len;
 					lr->href = (cur_href != (char *) 0) ?
 						strdup(cur_href) : (char *) 0;
 					lr->font = cur_font;
+					lr->image = (ImageInfo *) 0;
+					lr->winfo = (WidgetInfo *) 0;
 					field->run_cnt++;
 					}
 				}
@@ -1316,12 +1359,8 @@ int len;
 				wp = TableMakeButtonWidget(hw, &m);
 				}
 			if ((wp != (WidgetInfo *) 0)&&(wp->w != NULL)) {
-				field->winfos = (WidgetInfo **)realloc(
-					field->winfos,
-					(field->winfo_cnt + 1) *
-					sizeof(WidgetInfo *));
-				field->winfos[field->winfo_cnt] = wp;
-				field->winfo_cnt++;
+				TableAddRunItem(field, (char *) 0,
+					(ImageInfo *) 0, wp);
 				}
 			if ((m == (struct mark_up *) 0)||
 			    (m->type == M_TABLE)||
@@ -1396,28 +1435,34 @@ int len;
 						}
 					break;
 			case M_IMAGE:
-					/* first image in the cell wins */
-					if ((field->image ==
-						(ImageInfo *) 0)&&
-					    (m->start != (char *) 0)&&
+					/* an inline image item, flowed with
+					   the text (and hot when inside an
+					   anchor) */
+					if ((m->start != (char *) 0)&&
 					    (hw->html.resolveImage != NULL)) {
 						char *isrc;
+						ImageInfo *img;
 
 						isrc = ParseMarkTag(m->start,
 							MT_IMAGE, "SRC");
 						if (isrc != (char *) 0) {
-						    field->image = (ImageInfo *)
+						    img = (ImageInfo *)
 							(*(resolveImageProc)
 							(hw->html.resolveImage))
 							((Widget)hw, isrc,
 							 0, NULL, NULL);
 						    free(isrc);
+						    if ((img != (ImageInfo *) 0)&&
+							(img->width > 0)) {
+							TableAddRunItem(field,
+							    cur_href, img,
+							    (WidgetInfo *) 0);
+							}
 						    }
 						}
 					break;
 			case M_INPUT:
-					/* form widgets in the cell; they lay
-					   out left to right at draw time.
+					/* an inline form widget item.
 					   Hidden inputs register with the
 					   form but have no widget to show. */
 					if (m->start != (char *) 0) {
@@ -1427,14 +1472,10 @@ int len;
 							m->start);
 						if ((wp != (WidgetInfo *) 0)&&
 						    (wp->w != NULL)) {
-							field->winfos =
-							  (WidgetInfo **)realloc(
-							    field->winfos,
-							    (field->winfo_cnt+1) *
-							    sizeof(WidgetInfo *));
-							field->winfos[
-							  field->winfo_cnt] = wp;
-							field->winfo_cnt++;
+							TableAddRunItem(field,
+							    (char *) 0,
+							    (ImageInfo *) 0,
+							    wp);
 							}
 						}
 					break;
@@ -1452,23 +1493,22 @@ int len;
 		m = m->next;
 		}
 
-	if (field->winfo_cnt > 0) {
-		/* widgets win over text and images: a half-lost label
-		   is cosmetic, an invisible form field is unusable */
-		field->type = F_WIDGET;
-		}
-	else if (field->text != (char *) 0) {
+	if (field->run_cnt > 0) {
 		char *p;
 		int ri;
 
-		/* flatten embedded newlines/tabs: the single-line
-		   display branch draws the raw string */
-		for (p = field->text; *p; p++) {
-			if (isspace((unsigned char)*p)) {
-				*p = ' ';
+		/* flatten embedded newlines/tabs in the text runs */
+		if (field->text != (char *) 0) {
+			for (p = field->text; *p; p++) {
+				if (isspace((unsigned char)*p)) {
+					*p = ' ';
+					}
 				}
 			}
 		for (ri = 0; ri < field->run_cnt; ri++) {
+			if (field->runs[ri].text == (char *) 0) {
+				continue;
+				}
 			for (p = field->runs[ri].text; *p; p++) {
 				if (isspace((unsigned char)*p)) {
 					*p = ' ';
@@ -1476,10 +1516,6 @@ int len;
 				}
 			}
 		field->type = F_TEXT;
-		}
-	else if ((field->image != (ImageInfo *) 0)&&
-		 (field->image->width > 0)) {
-		field->type = F_IMAGE;
 		}
 
 	if (cur_href != (char *) 0) {
@@ -1832,61 +1868,7 @@ int yy;
 		return 0;
 		}
 
-	if (field->type == F_WIDGET) {
-		int wi, cx, wy;
-		WidgetInfo *wp;
-
-		/* lay the widgets out left to right, vertically centered;
-		   store doc coordinates so ScrollWidgets keeps them in
-		   place when the page scrolls */
-		cx = x + FIELD_BORDER_SPACE;
-		for (wi = 0; wi < field->winfo_cnt; wi++) {
-			wp = field->winfos[wi];
-			if (wp->w == NULL) {
-				continue;
-				}
-			wy = y + (height - wp->height) / 2;
-			if (wy < (y + FIELD_BORDER_SPACE)) {
-				wy = y + FIELD_BORDER_SPACE;
-				}
-			wp->x = cx + hw->html.scroll_x;
-			wp->y = wy + hw->html.scroll_y;
-			XtMoveWidget(wp->w, cx, wy);
-			wp->seeable = 1;
-			if (wp->mapped == False) {
-				wp->mapped = True;
-				XtSetMappedWhenManaged(wp->w, True);
-				}
-			cx += wp->width + FIELD_BORDER_SPACE;
-			}
-		return 0;
-		}
-
-	if (field->type == F_IMAGE) {
-		ImageInfo *pic = field->image;
-		int ix, iy;
-
-		if ((pic->image == None)&&(pic->image_data != NULL)) {
-			pic->image = InfoToImage(hw, pic, 0);
-			}
-		if (pic->image != None) {
-			/* center the image in its cell */
-			ix = x + (width - pic->width) / 2;
-			iy = y + (height - pic->height) / 2;
-			if (ix < (x + FIELD_BORDER_SPACE)) {
-				ix = x + FIELD_BORDER_SPACE;
-				}
-			if (iy < (y + FIELD_BORDER_SPACE)) {
-				iy = y + FIELD_BORDER_SPACE;
-				}
-			XCopyArea(XtDisplay(hw), pic->image,
-				XtWindow(hw->html.view), hw->html.drawGC,
-				0, 0, pic->width, pic->height, ix, iy);
-			}
-		return 0;
-		}
-
-	if (field->type != F_TEXT) { /* routine only does text at this time */
+	if (field->type != F_TEXT) { /* everything else is flow content */
 		return -1;
 		}
 
@@ -1899,8 +1881,8 @@ int yy;
 	XSetLineAttributes(XtDisplay(hw),hw->html.drawGC,1,LineSolid,
 		CapNotLast,JoinMiter);
 
-	/* flow the runs into the cell; each run draws with its own
-	   anchor color and underline */
+	/* flow the runs into the cell: text with per-run anchor color,
+	   font and underline; images and widgets as inline items */
 	{
 		int th;
 
