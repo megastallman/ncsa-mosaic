@@ -1289,14 +1289,16 @@ char *tptr;
 
 			/* check for alignment */
 			val = ParseMarkTag(m->start,MT_TABLE_DATA,"align");
-			if (caseless_equal(val,"left")) {
-				field->alignment = ALIGN_LEFT;
+			if (caseless_equal(val,"center")) {
+				field->alignment = ALIGN_CENTER;
 				}
 			else if (caseless_equal(val,"right")) {
 				field->alignment = ALIGN_RIGHT;
 				}
 			else {
-				field->alignment = ALIGN_CENTER;
+				/* like HTML says: td aligns left unless
+				   asked otherwise (th centers) */
+				field->alignment = ALIGN_LEFT;
 				}
 			TableFieldSetAttributes(hw,field,m);
 
