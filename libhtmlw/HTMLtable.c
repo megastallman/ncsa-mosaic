@@ -30,6 +30,9 @@ extern int htmlwTrace;
 static void TableDraw();
 extern Pixmap InfoToImage();
 extern WidgetInfo *TableMakeWidget();
+extern WidgetInfo *TableMakeSelectWidget();
+extern WidgetInfo *TableMakeTextAreaWidget();
+extern WidgetInfo *TableMakeButtonWidget();
 
 /* total size of a cell full of form widgets, laid out left to right
    with a gap between them */
@@ -1294,6 +1297,39 @@ int len;
 					lr->font = cur_font;
 					field->run_cnt++;
 					}
+				}
+			}
+		else if (((m->type == M_SELECT)||(m->type == M_TEXTAREA)||
+			  (m->type == M_BUTTON))&&(!m->is_end)) {
+			WidgetInfo *wp;
+
+			/* composite form elements: the bridge scans to
+			   the matching end tag and builds the widget, so
+			   their inner marks never become cell text */
+			if (m->type == M_SELECT) {
+				wp = TableMakeSelectWidget(hw, &m);
+				}
+			else if (m->type == M_TEXTAREA) {
+				wp = TableMakeTextAreaWidget(hw, &m);
+				}
+			else {
+				wp = TableMakeButtonWidget(hw, &m);
+				}
+			if ((wp != (WidgetInfo *) 0)&&(wp->w != NULL)) {
+				field->winfos = (WidgetInfo **)realloc(
+					field->winfos,
+					(field->winfo_cnt + 1) *
+					sizeof(WidgetInfo *));
+				field->winfos[field->winfo_cnt] = wp;
+				field->winfo_cnt++;
+				}
+			if ((m == (struct mark_up *) 0)||
+			    (m->type == M_TABLE)||
+			    (m->type == M_TABLE_ROW)||
+			    (m->type == M_TABLE_DATA)||
+			    (m->type == M_TABLE_HEADER)) {
+				/* stopped at a boundary: cell is over */
+				break;
 				}
 			}
 		else if (m->is_end) {

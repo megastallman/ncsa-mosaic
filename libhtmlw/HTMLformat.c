@@ -3132,6 +3132,322 @@ TableMakeWidget(hw, text)
 	return(MakeWidget(hw, text, -4096, -4096, WidgetId, CurrentForm));
 }
 
+static void ProcessOption();
+char *TextAreaAddValue();
+
+/*
+ * Table-cell versions of the SELECT/TEXTAREA/BUTTON fake-input
+ * synthesis.  The flow formatter builds these composites across many
+ * TriggerMarkChanges calls with static state; inside a table the
+ * whole mark list is at hand, so each bridge scans from the start
+ * mark to the matching end tag (stopping at a cell/row/table
+ * boundary if the end tag is missing), builds the same fake INPUT
+ * text the flow would, makes the widget, and leaves *mp at the mark
+ * it stopped on.
+ */
+
+static void ProcessOption();
+char *TextAreaAddValue();
+
+static int
+TableBoundaryMark(m)
+	struct mark_up *m;
+{
+	if (m == NULL)
+	{
+		return(1);
+	}
+	return ((m->type == M_TABLE)||(m->type == M_TABLE_ROW)||
+		(m->type == M_TABLE_DATA)||(m->type == M_TABLE_HEADER));
+}
+
+WidgetInfo *
+TableMakeSelectWidget(hw, mp)
+	HTMLWidget hw;
+	struct mark_up **mp;
+{
+	struct mark_up *m = *mp;
+	struct mark_up *smark = *mp;
+	SelectInfo *sptr;
+	WidgetInfo *wptr;
+	int len;
+	char *buf;
+	char *options, *returns, *value;
+	char *tptr;
+
+	if (CurrentForm == NULL)
+	{
+		wptr = NULL;
+		sptr = NULL;
+	}
+	else
+	{
+		sptr = (SelectInfo *)malloc(sizeof(SelectInfo));
+		sptr->hw = (Widget)hw;
+		sptr->mptr = smark;
+		sptr->option_cnt = 0;
+		sptr->returns = NULL;
+		sptr->retval_buf = NULL;
+		sptr->options = NULL;
+		sptr->option_buf = NULL;
+		sptr->value_cnt = 0;
+		sptr->value = NULL;
+		sptr->is_value = -1;
+	}
+
+	for (m = m->next; !TableBoundaryMark(m); m = m->next)
+	{
+		if ((m->type == M_SELECT)&&(m->is_end))
+		{
+			break;
+		}
+		if (sptr == NULL)
+		{
+			continue;
+		}
+		if ((m->type == M_OPTION)&&(!m->is_end))
+		{
+			if (sptr->option_buf != NULL)
+			{
+				ProcessOption(sptr);
+			}
+			sptr->option_buf = (char *)malloc(1);
+			strcpy(sptr->option_buf, "");
+
+			tptr = ParseMarkTag(m->start,
+								MT_OPTION, "SELECTED");
+			if (tptr != NULL)
+			{
+				sptr->is_value = 1;
+				free(tptr);
+			}
+			else
+			{
+				sptr->is_value = 0;
+			}
+
+			tptr = ParseMarkTag(m->start,
+								MT_OPTION, "VALUE");
+			if (tptr != NULL)
+			{
+				if (*tptr != '\0')
+				{
+					sptr->retval_buf = tptr;
+				}
+				else
+				{
+					sptr->retval_buf = NULL;
+					free(tptr);
+				}
+			}
+			else
+			{
+				sptr->retval_buf = NULL;
+			}
+		}
+		else if ((m->type == M_NONE)&&
+			(sptr->option_buf != NULL))
+		{
+			sptr->option_buf = TextAreaAddValue(
+				sptr->option_buf, m->text);
+		}
+	}
+	*mp = m;
+
+	if (sptr == NULL)
+	{
+		return(NULL);
+	}
+
+	if (sptr->option_buf != NULL)
+	{
+		ProcessOption(sptr);
+	}
+
+	options = ComposeCommaList(sptr->options, sptr->option_cnt);
+	returns = ComposeCommaList(sptr->returns, sptr->option_cnt);
+	value = ComposeCommaList(sptr->value, sptr->value_cnt);
+	FreeCommaList(sptr->options, sptr->option_cnt);
+	FreeCommaList(sptr->returns, sptr->option_cnt);
+	FreeCommaList(sptr->value, sptr->value_cnt);
+
+	len = strlen(MT_INPUT) + strlen(options) + strlen(returns) +
+		strlen(value) +
+		strlen(" type=select options=\"\" returns=\"\" value=\"\"");
+	buf = (char *)malloc(len + strlen(smark->start) + 1);
+	strcpy(buf, MT_INPUT);
+	strcat(buf, " type=select");
+	strcat(buf, " options=\"");
+	strcat(buf, options);
+	strcat(buf, "\" returns=\"");
+	strcat(buf, returns);
+	strcat(buf, "\" value=\"");
+	strcat(buf, value);
+	strcat(buf, "\"");
+	strcat(buf, (char *)(smark->start + strlen(MT_SELECT)));
+
+	WidgetId++;
+	wptr = MakeWidget(hw, buf, -4096, -4096, WidgetId, CurrentForm);
+
+	free(buf);
+	free(options);
+	free(returns);
+	free(value);
+	free((char *)sptr);
+
+	return(wptr);
+}
+
+WidgetInfo *
+TableMakeTextAreaWidget(hw, mp)
+	HTMLWidget hw;
+	struct mark_up **mp;
+{
+	struct mark_up *m = *mp;
+	struct mark_up *smark = *mp;
+	WidgetInfo *wptr;
+	char *buf;
+	int len;
+
+	if (CurrentForm == NULL)
+	{
+		buf = NULL;
+	}
+	else
+	{
+		len = strlen(MT_INPUT) +
+			strlen(" type=textarea value=\"\"");
+		buf = (char *)malloc(len + strlen(smark->start) + 1);
+		strcpy(buf, MT_INPUT);
+		strcat(buf, (char *)(smark->start + strlen(MT_TEXTAREA)));
+		strcat(buf, " type=textarea");
+		strcat(buf, " value=\"");
+	}
+
+	for (m = m->next; !TableBoundaryMark(m); m = m->next)
+	{
+		if ((m->type == M_TEXTAREA)&&(m->is_end))
+		{
+			break;
+		}
+		if ((buf != NULL)&&(m->type == M_NONE))
+		{
+			buf = TextAreaAddValue(buf, m->text);
+		}
+	}
+	*mp = m;
+
+	if (buf == NULL)
+	{
+		return(NULL);
+	}
+
+	buf = (char *)realloc(buf, strlen(buf) + 2);
+	strcat(buf, "\"");
+
+	WidgetId++;
+	wptr = MakeWidget(hw, buf, -4096, -4096, WidgetId, CurrentForm);
+	free(buf);
+
+	return(wptr);
+}
+
+WidgetInfo *
+TableMakeButtonWidget(hw, mp)
+	HTMLWidget hw;
+	struct mark_up **mp;
+{
+	struct mark_up *m = *mp;
+	struct mark_up *smark = *mp;
+	WidgetInfo *wptr;
+	char *attrs;
+	char *label;
+	char *buf;
+	char *tptr;
+	int self_closed;
+
+	if (CurrentForm == NULL)
+	{
+		return(NULL);
+	}
+
+	/*
+	 * The button's own attributes; an unspecified type submits,
+	 * per the HTML spec.
+	 */
+	attrs = (char *)malloc(strlen(smark->start) +
+		strlen(" type=submit") + 1);
+	strcpy(attrs, (char *)(smark->start + strlen("button")));
+	self_closed = ((attrs[0] != '\0')&&
+		(attrs[strlen(attrs) - 1] == '/'));
+	if (self_closed)
+	{
+		attrs[strlen(attrs) - 1] = '\0';
+	}
+	tptr = ParseMarkTag(smark->start, "button", "TYPE");
+	if (tptr == NULL)
+	{
+		strcat(attrs, " type=submit");
+	}
+	else
+	{
+		free(tptr);
+	}
+
+	/*
+	 * The element content is the label.
+	 */
+	label = (char *)malloc(1);
+	label[0] = '\0';
+	if (!self_closed)
+	{
+		for (m = m->next; !TableBoundaryMark(m); m = m->next)
+		{
+			if ((m->type == M_BUTTON)&&(m->is_end))
+			{
+				break;
+			}
+			if (m->type == M_NONE)
+			{
+				label = TextAreaAddValue(label, m->text);
+			}
+		}
+	}
+	*mp = m;
+
+	clean_white_space(label);
+	if (label[0] == '\0')
+	{
+		/* fall back to the value attribute as the label */
+		tptr = ParseMarkTag(smark->start, "button", "VALUE");
+		if (tptr != NULL)
+		{
+			free(label);
+			label = tptr;
+		}
+	}
+
+	/*
+	 * The label goes first so it wins as the displayed value.
+	 */
+	buf = (char *)malloc(strlen(MT_INPUT) + strlen(" value=\"\"") +
+		strlen(label) + strlen(attrs) + 1);
+	strcpy(buf, MT_INPUT);
+	strcat(buf, " value=\"");
+	strcat(buf, label);
+	strcat(buf, "\"");
+	strcat(buf, attrs);
+
+	WidgetId++;
+	wptr = MakeWidget(hw, buf, -4096, -4096, WidgetId, CurrentForm);
+
+	free(buf);
+	free(label);
+	free(attrs);
+
+	return(wptr);
+}
+
 /*
  * Place a Widget. Add an element record for it.
  */
