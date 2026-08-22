@@ -84,9 +84,15 @@
 extern int srcTrace;
 #endif
 
+/* view background at decode time, 0..255 per channel (img.c stashes
+   it before each ReadBitmap): transparent pixels composite onto this.
+   -1 means unknown; fall back to the stock Motif grey. */
+extern int png_view_bg_red, png_view_bg_green, png_view_bg_blue;
+
 unsigned char *
 ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 {
+    int composited = 0;
 
     unsigned char *pixmap;
     unsigned char *p;
@@ -188,38 +194,46 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 #endif
 
 
-#if 0
-        /* This handles alpha and transparency by replacing it with
-           a background value. */
-        /* its #if'ed out for now cause I don't have anything to
-           test it with */
-    {
-        png_color_16 my_background, *image_background;
-
-        if (PNG_INFO_bKGD(png_ptr, info_ptr, &image_background) != 0)
-            png_set_background(png_ptr, image_background,
-                               PNG_BACKGROUND_GAMMA_FILE, 1, 1.0);
-        else
-            png_set_background(png_ptr, &my_background,
-                               PNG_BACKGROUND_GAMMA_SCREEN, 0, 1.0);
-    }
-#endif
-
         /* strip pixels in 16-bit images down to 8 bits */
     if (bit_depth == 16)
         png_set_strip_16(png_ptr);
 
-        /* we do nothing with alpha yet: drop the channel in libpng
-           so every later stage sees plain indexed/gray rows */
-    if (color_type & PNG_COLOR_MASK_ALPHA)
-        png_set_strip_alpha(png_ptr);
+        /* transparency (an alpha channel or a tRNS chunk): expand to
+           8-bit RGB and composite onto the view background -- simply
+           stripping the alpha shows whatever RGB hides under the
+           transparent pixels, usually solid black */
+    if ((color_type & PNG_COLOR_MASK_ALPHA) ||
+        png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS)) {
+        png_color_16 my_background;
+
+        my_background.index = 0;
+        my_background.red = (png_view_bg_red >= 0) ?
+            (png_uint_16)png_view_bg_red : 0xbf;
+        my_background.green = (png_view_bg_green >= 0) ?
+            (png_uint_16)png_view_bg_green : 0xbf;
+        my_background.blue = (png_view_bg_blue >= 0) ?
+            (png_uint_16)png_view_bg_blue : 0xbf;
+        my_background.gray = my_background.red;
+
+        png_set_expand(png_ptr);
+        if (!(color_type & PNG_COLOR_MASK_COLOR))
+            png_set_gray_to_rgb(png_ptr);
+        png_set_background(png_ptr, &my_background,
+                           PNG_BACKGROUND_GAMMA_SCREEN, 0, 1.0);
+        composited = 1;
+    }
 
         /* If it is a color image then check if it has a palette. If not
-           then dither the image to 256 colors, and make up a palette */
-    if (color_type==PNG_COLOR_TYPE_RGB ||
+           then dither the image to 256 colors, and make up a palette.
+           A composited image is 8-bit RGB by now whatever it started
+           as, and its file palette (if any) no longer matches the
+           composited pixels, so it always takes the color-cube path. */
+    if (composited ||
+        color_type==PNG_COLOR_TYPE_RGB ||
         color_type==PNG_COLOR_TYPE_RGB_ALPHA) {
 
-        if (png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) == 0) {
+        if (composited ||
+            png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) == 0) {
 
 #ifndef DISABLE_TRACE
             if (srcTrace) {
@@ -233,6 +247,29 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
                 std_color_cube[i].red=(i%6)*51;
                 std_color_cube[i].green=((i/6)%6)*51;
                 std_color_cube[i].blue=(i/36)*51;
+            }
+
+                /* composited images: swap the cube entry nearest the
+                   view background for the exact background color, so
+                   fully transparent areas quantize to it and vanish
+                   instead of showing as an off-shade rectangle */
+            if (composited) {
+                int ri, gi, bi;
+                int br = (png_view_bg_red >= 0) ? png_view_bg_red : 0xbf;
+                int bgr = (png_view_bg_green >= 0) ?
+                    png_view_bg_green : 0xbf;
+                int bb = (png_view_bg_blue >= 0) ? png_view_bg_blue : 0xbf;
+
+                ri = (br + 25) / 51;
+                gi = (bgr + 25) / 51;
+                bi = (bb + 25) / 51;
+                if (ri > 5) ri = 5;
+                if (gi > 5) gi = 5;
+                if (bi > 5) bi = 5;
+                i = ri + 6 * gi + 36 * bi;
+                std_color_cube[i].red = br;
+                std_color_cube[i].green = bgr;
+                std_color_cube[i].blue = bb;
             }
 
                 /* this should probably be dithering to
@@ -351,7 +388,16 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 
         /* now that we have the (transformed to 8-bit RGB) image, we have
            to copy the resulting palette to our colormap. */
-    if (color_type & PNG_COLOR_MASK_COLOR) {
+    if (composited) {
+            /* quantized to the 216 color cube above */
+        for (i=0; i < 216; i++) {
+            colrs[i].red = std_color_cube[i].red << 8;
+            colrs[i].green = std_color_cube[i].green << 8;
+            colrs[i].blue = std_color_cube[i].blue << 8;
+            colrs[i].pixel = i;
+            colrs[i].flags = DoRed|DoGreen|DoBlue;
+        }
+    } else if (color_type & PNG_COLOR_MASK_COLOR) {
         if (png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) != 0) {
 
             for (i=0; i < num_palette; i++) {

@@ -98,6 +98,12 @@ static ImageInfo *blank = NULL;
 
 extern char **imagekill_sites;
 
+/* view background at decode time, 0..255 per channel; readPNG.c
+   composites transparent pixels onto it (-1 = not known yet) */
+int png_view_bg_red = -1;
+int png_view_bg_green = -1;
+int png_view_bg_blue = -1;
+
 /*******************************/
 
 
@@ -574,6 +580,26 @@ stuffcache:
 		/*********************************************/
 		/* Send it through CCI if need be            */
 		MoCCISendBrowserViewFile(src, "unknown", fnam);
+	}
+
+	/* stash the view background for readPNG: GIF transparency is a
+	   palette index patched after decode (below), but PNG alpha has
+	   to be composited during the decode itself */
+	if (view) {
+		unsigned long vbg_pixel;
+		XColor vbg_colr;
+
+		XtVaGetValues(view, XtNbackground, &vbg_pixel, NULL);
+		vbg_colr.pixel = vbg_pixel;
+		XQueryColor(XtDisplay(view),
+			    (installed_colormap ?
+			     installed_cmap :
+			     DefaultColormap(XtDisplay(view),
+				DefaultScreen(XtDisplay(view)))),
+			    &vbg_colr);
+		png_view_bg_red = vbg_colr.red >> 8;
+		png_view_bg_green = vbg_colr.green >> 8;
+		png_view_bg_blue = vbg_colr.blue >> 8;
 	}
 
 	data = ReadBitmap(fnam, &width, &height, colrs, &bg);
