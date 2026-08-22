@@ -132,6 +132,12 @@ int y;
 		return(0);
 		}
 
+	/* A squeezed table can hand us a sliver (or even a negative
+	   width); never wrap narrower than a couple of characters. */
+	if (width < 16) {
+		width = 16;
+		}
+
 	textList = ListCreate();
         stringWidth = XTextWidth(font,text,strlen(text));
 	if (stringWidth < width) {
@@ -192,6 +198,14 @@ int y;
 				wordLength = (int) (wordEnd - wordStart);
 				wordWidth = XTextWidth(font,wordStart,
 							wordLength);
+				}
+
+			/* the field may be narrower than one character;
+			   take one anyway or we would loop here forever,
+			   eating memory until the OOM killer steps in */
+			if (wordEnd == wordStart) {
+				wordEnd++;
+				wordLength = 1;
 				}
 
 			strncat(tmpBuff, wordStart, wordLength);
@@ -889,6 +903,19 @@ char *tptr;
 	m = *mptr;
 	field = (TableField *) 0;
 	while (m && (!((m->type == M_TABLE) && (m->is_end)))) {
+
+		if ((m->type == M_TABLE) && (!m->is_end) && (m != *mptr)) {
+			/*
+			 * A nested table.  This simple grid builder cannot
+			 * lay it out: the inner end tag would sever our
+			 * scan and the merged cells produce absurd column
+			 * counts.  Give up on this table; the caller falls
+			 * back to linear flow, and the innermost tables
+			 * (which have no nesting) get laid out for real.
+			 */
+			free((char *)t);
+			return(0);
+			}
 
 		if (m->type == M_CAPTION) {
 			if (ParseMarkTag(m->start,MT_CAPTION,"top")) {
