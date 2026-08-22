@@ -97,8 +97,9 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 
     double screen_gamma;
 
-    png_byte *png_pixels=NULL, **row_pointers[*height];
+    png_byte *png_pixels=NULL, **row_pointers=NULL;
     int i, j, bit_depth, color_type, num_palette, interlace_type;
+    int rowbytes, pixel_step;
 
     png_color std_color_cube[216];
     png_colorp palette;
@@ -112,20 +113,19 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
         if (fread(buf, 1, PNG_BYTES_TO_CHECK, infile) != PNG_BYTES_TO_CHECK)
             return 0;
 
-        return(!png_sig_cmp(buf, 0, PNG_BYTES_TO_CHECK));
+        if (png_sig_cmp(buf, 0, PNG_BYTES_TO_CHECK))
+            return 0;
     }
 
     /* allocate the structures */
     png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if(!png_ptr)
-		fclose(infile);
         return 0;
 
     /* initialize the structures */
     info_ptr = png_create_info_struct(png_ptr);
     if(!info_ptr) {
-        fclose(infile);
-        png_destroy_read_struct(png_ptr, NULL, NULL);
+        png_destroy_read_struct(&png_ptr, NULL, NULL);
         return 0;
     }
 
@@ -138,15 +138,15 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
         }
 #endif
 
-        png_destroy_read_struct(png_ptr, info_ptr, NULL);
-        fclose(infile);
-		
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        /* the caller owns infile: it rewinds and tries other
+           decoders after we fail, so never fclose it here */
         if(png_pixels != NULL)
             free((char *)png_pixels);
 
         if(row_pointers != NULL)
             free((png_byte **)row_pointers);
-        
+
         return 0;
     }
 
@@ -159,6 +159,9 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 
         /* set up the input control */
     png_init_io(png_ptr, infile);
+
+        /* the signature check above already consumed these bytes */
+    png_set_sig_bytes(png_ptr, PNG_BYTES_TO_CHECK);
 
         /* read the file information */
     png_read_info(png_ptr, info_ptr);
@@ -206,13 +209,17 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
     if (bit_depth == 16)
         png_set_strip_16(png_ptr);
 
+        /* we do nothing with alpha yet: drop the channel in libpng
+           so every later stage sees plain indexed/gray rows */
+    if (color_type & PNG_COLOR_MASK_ALPHA)
+        png_set_strip_alpha(png_ptr);
 
         /* If it is a color image then check if it has a palette. If not
            then dither the image to 256 colors, and make up a palette */
     if (color_type==PNG_COLOR_TYPE_RGB ||
         color_type==PNG_COLOR_TYPE_RGB_ALPHA) {
 
-        if (png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) != 0) {
+        if (png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) == 0) {
 
 #ifndef DISABLE_TRACE
             if (srcTrace) {
@@ -255,7 +262,11 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
            small as they can. This expands pixels to 1 pixel per byte, and
            if a transparency value is supplied, an alpha channel is
            built.*/
-    if (bit_depth < 8)
+    if ((color_type == PNG_COLOR_TYPE_GRAY ||
+         color_type == PNG_COLOR_TYPE_GRAY_ALPHA) && bit_depth < 8)
+        /* scales the gray values to the full 0..255 range too */
+        png_set_expand_gray_1_2_4_to_8(png_ptr);
+    else if (bit_depth < 8)
         png_set_packing(png_ptr);
 
 
@@ -313,13 +324,25 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 
         /* allocate the pixel grid which we will need to send to
            png_read_image(). */
-    int rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+    rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+    if ((*width) <= 0 || (*height) <= 0 || rowbytes < (*width)) {
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        return 0;
+    }
     png_pixels = (png_byte *)malloc(rowbytes *
                                     (*height) * sizeof(png_byte));
-
+    row_pointers = (png_byte **)malloc((*height) * sizeof(png_byte *));
+    if (png_pixels == NULL || row_pointers == NULL) {
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        if (png_pixels != NULL)
+            free((char *)png_pixels);
+        if (row_pointers != NULL)
+            free((png_byte **)row_pointers);
+        return 0;
+    }
 
     for (i=0; i < *height; i++)
-        row_pointers[i]=png_malloc(png_ptr, rowbytes);
+        row_pointers[i] = png_pixels + i * rowbytes;
 
 
         /* FINALLY - read the darn thing. */
@@ -329,7 +352,7 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
         /* now that we have the (transformed to 8-bit RGB) image, we have
            to copy the resulting palette to our colormap. */
     if (color_type & PNG_COLOR_MASK_COLOR) {
-        if (png_get_PLTE(png_ptr, info_ptr, palette, num_palette) != 0) {
+        if (png_get_PLTE(png_ptr, info_ptr, &palette, &num_palette) != 0) {
 
             for (i=0; i < num_palette; i++) {
                 colrs[i].red = palette[i].red << 8;
@@ -365,38 +388,16 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
 
     pixmap = (png_byte *)malloc((*width) * (*height) * sizeof(png_byte));
 
-    p = pixmap; q = png_pixels;
+    p = pixmap;
 
-        /* if there is an alpha channel, we have to get rid of it in the
-           pixmap, since I don't do anything with it yet */
-    if (color_type & PNG_COLOR_MASK_ALPHA) {
-
-#ifndef DISABLE_TRACE
-        if (srcTrace) {
-            fprintf(stderr,"Getting rid of alpha channel\n");
-        }
-#endif
-        for(i=0; i<*height; i++) {
-            q = row_pointers[i];
-            for(j=0; j<*width; j++) {
-                *p++ = *q++; /*palette index*/
-                q++; /* skip the alpha pixel */
-            }
-        }
-    }
-    else {
-
-#ifndef DISABLE_TRACE
-        if (srcTrace) {
-            fprintf(stderr,"No alpha channel\n");
-        }
-#endif
-
-        for(i=0; i<*height; i++) {
-            q = row_pointers[i];
-            for(j=0; j<*width; j++) {
-                *p++ = *q++; /*palette index*/
-            }
+        /* rows may still carry more than one byte per pixel (an alpha
+           channel libpng didn't strip, say); step over the extras */
+    pixel_step = rowbytes / (*width);
+    for(i=0; i<*height; i++) {
+        q = row_pointers[i];
+        for(j=0; j<*width; j++) {
+            *p++ = *q; /*palette/gray index*/
+            q += pixel_step;
         }
     }
 
@@ -404,7 +405,7 @@ ReadPNG(FILE *infile,int *width, int *height, XColor *colrs)
     free((png_byte **)row_pointers);
 
     /* clean up after the read, and free any memory allocated */
-	png_destroy_read_struct(png_ptr, info_ptr, NULL);
+    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
 
     return pixmap;
 }
