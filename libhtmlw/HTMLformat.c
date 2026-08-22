@@ -3488,7 +3488,8 @@ int *x, *y;
 	   section  - amb */
 	if (InDocHead)
 		if ((type != M_TITLE)&&(type != M_NONE)&&(type != M_BASE)&&
-			(type != M_INDEX)&&(type != M_COMMENT))
+			(type != M_INDEX)&&(type != M_COMMENT)&&
+			(type != M_SKIP)&&(type != M_NOOP))
 		{
 			Ignore = 0;
 			InDocHead = 0;
@@ -4832,7 +4833,21 @@ int *x, *y;
 		}
 		break;
 	case M_COMMENT:
-		Ignore = !mark->is_end;
+		break;
+		/*
+		 * Generic blocks (div, section, article, ...) just force
+		 * a line break on entry and exit.  Repeated breaks from
+		 * nested blocks collapse since the linefeed is conditional.
+		 */
+	case M_DIV:
+		ConditionalLineFeed(hw, x, y, 1);
+		break;
+		/*
+		 * M_SKIP contents were swallowed by the parser;
+		 * M_NOOP tags render nothing themselves.
+		 */
+	case M_SKIP:
+	case M_NOOP:
 		break;
 	default:
 		break;

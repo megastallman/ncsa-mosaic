@@ -278,7 +278,7 @@ static XtResource resources[] = {
       offset (delay_image_loads), XtRString, "False" },
 /*SWP*/
   { "enableTables", "EnableTables", XtRBoolean, sizeof(Boolean),
-      offset(enable_tables), XtRString, "False"},
+      offset(enable_tables), XtRString, "True"},
   { "disableMiddleButton", "DisableMiddleButton", XtRBoolean, sizeof(Boolean),
       offset(disableMiddleButton), XtRString, "False"},
 

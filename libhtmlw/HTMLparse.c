@@ -822,6 +822,63 @@ get_mark(start, endp)
 
 
 /*
+ * Skip over the contents of an element that must never be rendered
+ * (script, style, template, svg, ...).  Returns a pointer to the '<'
+ * of the matching close tag, which then gets tokenized normally, or
+ * to the end of the string.  Only svg and math may contain nested
+ * instances of themselves; for everything else the first close tag
+ * wins, as in contemporary browsers.
+ */
+static char *
+SkipRawContent(start, name)
+	char *start;
+	char *name;
+{
+	char *ptr;
+	char after;
+	int nlen;
+	int depth;
+	int nestable;
+
+	nlen = strlen(name);
+	depth = 1;
+	nestable = (caseless_equal(name, "svg")||caseless_equal(name, "math"));
+
+	for (ptr = start; *ptr != '\0'; ptr++)
+	{
+		if (*ptr != '<')
+		{
+			continue;
+		}
+		if ((*(ptr + 1) == '/')&&
+			(caseless_equal_prefix(ptr + 2, name, nlen)))
+		{
+			after = *(ptr + 2 + nlen);
+			if ((after == '>')||(after == '\0')||
+				(isspace((int)after)))
+			{
+				depth--;
+				if (depth == 0)
+				{
+					return(ptr);
+				}
+			}
+		}
+		else if ((nestable)&&
+			(caseless_equal_prefix(ptr + 1, name, nlen)))
+		{
+			after = *(ptr + 1 + nlen);
+			if ((after == '>')||(isspace((int)after)))
+			{
+				depth++;
+			}
+		}
+	}
+	return(ptr);
+}
+
+
+/*
  * Special version of get_text.  It reads all text up to the
  * end of the plain text mark, or the end of the file.
  */
@@ -1148,6 +1205,31 @@ HTMLParse(old_list, str, hw)
 				start++;
 			}
 		}
+		else if ((mark != NULL)&&(mark->type == M_SKIP)&&
+			(!mark->is_end)&&(mark->start != NULL))
+		{
+			/*
+			 * The contents of script/style/svg/etc. are never
+			 * rendered; swallow everything up to the matching
+			 * close tag.  A self-closed tag (e.g. <svg ... />)
+			 * has no contents to skip.
+			 */
+			char name[16];
+			int i;
+
+			for (i = 0; (i < 15)&&(mark->start[i] != '\0')&&
+				(mark->start[i] != '/')&&
+				(!isspace((int)mark->start[i])); i++)
+			{
+				name[i] = mark->start[i];
+			}
+			name[i] = '\0';
+
+			if (mark->start[strlen(mark->start) - 1] != '/')
+			{
+				start = SkipRawContent(start, name);
+			}
+		}
 		/*
 		 * If we are parsing pre-formatted text we need to set a
 		 * flag so we don't throw out needed linefeeds.
@@ -1187,6 +1269,112 @@ HTMLParse(old_list, str, hw)
 	return(list);
 }
 
+
+
+/*
+ * Contemporary (HTML5+) tags, mapped onto mark types the formatter
+ * already understands.  Checked by ParseMarkType after the classic
+ * tags fail to match.
+ *
+ * M_DIV	force a line break before and after (generic block).
+ * M_SKIP	the element's contents are never rendered; the parse
+ *		loop skips everything up to the matching close tag.
+ * M_NOOP	the tag itself does nothing, but its contents render
+ *		normally (the right fallback for a browser without
+ *		scripting, CSS or media support).
+ */
+static struct
+{
+	char *name;
+	int type;
+} ModernTags[] =
+{
+	/* generic blocks */
+	{"div", M_DIV},
+	{"main", M_DIV},
+	{"article", M_DIV},
+	{"section", M_DIV},
+	{"nav", M_DIV},
+	{"header", M_DIV},
+	{"footer", M_DIV},
+	{"aside", M_DIV},
+	{"hgroup", M_DIV},
+	{"search", M_DIV},
+	{"figure", M_DIV},	/* NOT M_FIGURE; that is HTML3 <fig> */
+	{"figcaption", M_DIV},
+	{"details", M_DIV},
+	{"summary", M_DIV},
+	{"dialog", M_DIV},
+	{"fieldset", M_DIV},
+	{"legend", M_DIV},
+
+	/* inline elements rendered like existing ones */
+	{"s", M_STRIKEOUT},
+	{"del", M_STRIKEOUT},
+	{"ins", M_UNDERLINED},
+	{"mark", M_BOLD},
+	{"big", M_BOLD},
+	{"dfn", M_ITALIC},
+	{"q", M_CITATION},
+
+	/* elements whose contents must never be rendered */
+	{"script", M_SKIP},
+	{"style", M_SKIP},
+	{"template", M_SKIP},
+	{"svg", M_SKIP},
+	{"math", M_SKIP},
+	{"datalist", M_SKIP},
+	{"noembed", M_SKIP},
+	{"noframes", M_SKIP},
+
+	/* recognized tags with no rendering effect of their own;
+	   their contents (if any) render as fallback text */
+	{"html", M_NOOP},
+	{"meta", M_NOOP},
+	{"link", M_NOOP},
+	{"span", M_NOOP},
+	{"small", M_NOOP},
+	{"abbr", M_NOOP},
+	{"acronym", M_NOOP},
+	{"time", M_NOOP},
+	{"data", M_NOOP},
+	{"bdi", M_NOOP},
+	{"bdo", M_NOOP},
+	{"wbr", M_NOOP},
+	{"nobr", M_NOOP},
+	{"font", M_NOOP},
+	{"basefont", M_NOOP},
+	{"ruby", M_NOOP},
+	{"rt", M_NOOP},
+	{"rp", M_NOOP},
+	{"slot", M_NOOP},
+	{"label", M_NOOP},
+	{"button", M_NOOP},
+	{"optgroup", M_NOOP},
+	{"output", M_NOOP},
+	{"progress", M_NOOP},
+	{"meter", M_NOOP},
+	{"thead", M_NOOP},
+	{"tbody", M_NOOP},
+	{"tfoot", M_NOOP},
+	{"colgroup", M_NOOP},
+	{"col", M_NOOP},
+	{"picture", M_NOOP},
+	{"source", M_NOOP},
+	{"track", M_NOOP},
+	{"video", M_NOOP},
+	{"audio", M_NOOP},
+	{"object", M_NOOP},
+	{"param", M_NOOP},
+	{"embed", M_NOOP},
+	{"iframe", M_NOOP},
+	{"canvas", M_NOOP},
+	{"noscript", M_NOOP},
+	{"marquee", M_NOOP},
+	{"blink", M_NOOP},
+
+	{NULL, M_UNKNOWN}
+};
 
 
 /*
@@ -1472,22 +1660,27 @@ ParseMarkType(str)
 	{
 		type = M_CENTER;
 	}
-	else if (caseless_equal(str, MT_SCRIPT))
-	{
-		type = M_COMMENT;
-	}
-	else if (caseless_equal(str, MT_STYLE))
-	{
-		type = M_COMMENT;
-	}
 	else
 	{
-#ifndef DISABLE_TRACE
-		if (htmlwTrace) {
-			fprintf(stderr, "warning: unknown mark (%s)\n", str);
+		int i;
+
+		for (i = 0; ModernTags[i].name != NULL; i++)
+		{
+			if (caseless_equal(str, ModernTags[i].name))
+			{
+				type = ModernTags[i].type;
+				break;
+			}
 		}
+		if (ModernTags[i].name == NULL)
+		{
+#ifndef DISABLE_TRACE
+			if (htmlwTrace) {
+				fprintf(stderr, "warning: unknown mark (%s)\n", str);
+			}
 #endif
-		type = M_UNKNOWN;
+			type = M_UNKNOWN;
+		}
 	}
 
 	*tptr = tchar;

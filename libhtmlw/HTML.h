@@ -440,8 +440,9 @@ struct delay_rec {
 #define M_MAP		58 /* swp - client side ismap */
 #define M_AREA		59 /* swp - client side ismap */
 #define M_CENTER	60
-#define M_SCRIPT        61
-#define M_STYLE         62
+#define M_DIV		61 /* generic block: div, section, article, ... */
+#define M_SKIP		62 /* contents never rendered: script, style, svg, ... */
+#define M_NOOP		63 /* recognized tag with no rendering effect */
 
 /* syntax of Mark types */
 #define	MT_TITLE	"title"
@@ -504,9 +505,8 @@ struct delay_rec {
 #define MT_AREA		"area" /* swp - client side ismap */
 #define MT_CENTER	"center"
 
-/* tags from THE FUTURE! we will ignore their contents. */
-#define MT_SCRIPT       "script"
-#define MT_STYLE        "style"
+/* Contemporary (HTML5+) tags are mapped in the ModernTags table in
+   HTMLparse.c rather than through MT_ defines. */
 
 /* anchor tags */
 #define	AT_NAME		"name"

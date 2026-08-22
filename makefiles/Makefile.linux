@@ -237,7 +237,7 @@ CWARNINGS = -Wall \
 	-Wno-error=incompatible-pointer-types \
 	-Wno-error=return-mismatch
 
-CFLAGS = -std=gnu11 -g $(sysconfigflags) $(prereleaseflags) $(CWARNINGS) $(customflags)
+CFLAGS = -std=gnu11 -fcommon -g $(sysconfigflags) $(prereleaseflags) $(CWARNINGS) $(customflags)
 
 # Don't worry about these -- for development purposes only.
 PURIFY = purify
