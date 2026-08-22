@@ -190,6 +190,117 @@ char *metaRefreshURL = NULL;
 int metaRefreshDelay = 0;
 
 extern int caseless_equal_prefix();
+
+/*
+ * Text measurement that matches what XmStringDraw draws: in a UTF-8
+ * locale, multibyte text must be measured per character, not per
+ * byte, or Cyrillic (and friends) measures at about twice its drawn
+ * width -- inflating anchor underlines, hit boxes and line breaking.
+ * Two-byte (iso10646) fonts get the text decoded to XChar2b; plain
+ * 8-bit fonts measure as they always did.
+ */
+
+static XChar2b *
+Utf8ToXChar2b(s, len, outlen)
+	char *s;
+	int len;
+	int *outlen;
+{
+	static XChar2b *buf = NULL;
+	static int cap = 0;
+	unsigned char *p, *end;
+	unsigned int c, cp;
+	int n;
+
+	if (len >= cap)
+	{
+		cap = len + 64;
+		buf = (XChar2b *)realloc((char *)buf,
+			cap * sizeof(XChar2b));
+	}
+	p = (unsigned char *)s;
+	end = p + len;
+	n = 0;
+	while (p < end)
+	{
+		c = *p;
+		if (c < 0x80)
+		{
+			cp = c;
+			p += 1;
+		}
+		else if (((c & 0xE0) == 0xC0)&&((p + 1) < end)&&
+			((p[1] & 0xC0) == 0x80))
+		{
+			cp = ((c & 0x1F) << 6)|(p[1] & 0x3F);
+			p += 2;
+		}
+		else if (((c & 0xF0) == 0xE0)&&((p + 2) < end)&&
+			((p[1] & 0xC0) == 0x80)&&((p[2] & 0xC0) == 0x80))
+		{
+			cp = ((c & 0x0F) << 12)|((p[1] & 0x3F) << 6)|
+				(p[2] & 0x3F);
+			p += 3;
+		}
+		else if (((c & 0xF8) == 0xF0)&&((p + 3) < end))
+		{
+			cp = '?';	/* beyond the BMP */
+			p += 4;
+		}
+		else
+		{
+			cp = c;		/* stray byte: latin-1 */
+			p += 1;
+		}
+		buf[n].byte1 = (cp >> 8) & 0xFF;
+		buf[n].byte2 = cp & 0xFF;
+		n++;
+	}
+	*outlen = n;
+	return(buf);
+}
+
+int
+HTMLTextWidth(font, s, len)
+	XFontStruct *font;
+	char *s;
+	int len;
+{
+	XChar2b *w;
+	int n;
+
+	if ((font == NULL)||(s == NULL)||(len <= 0))
+	{
+		return(0);
+	}
+	if (font->max_byte1 == 0)
+	{
+		return(XTextWidth(font, s, len));
+	}
+	w = Utf8ToXChar2b(s, len, &n);
+	return(XTextWidth16(font, w, n));
+}
+
+void
+HTMLTextExtents(font, s, len, dir, asc, desc, all)
+	XFontStruct *font;
+	char *s;
+	int len;
+	int *dir, *asc, *desc;
+	XCharStruct *all;
+{
+	XChar2b *w;
+	int n;
+
+	if ((font->max_byte1 == 0)||(s == NULL)||(len <= 0))
+	{
+		XTextExtents(font, (s != NULL) ? s : "",
+			(len > 0) ? len : 0, dir, asc, desc, all);
+		return;
+	}
+	w = Utf8ToXChar2b(s, len, &n);
+	XTextExtents16(font, w, n, dir, asc, desc, all);
+}
 static struct mark_up *Last;
 static FormInfo *CurrentForm;
 static MapInfo *CurrentMap=NULL; /* csi stuff -- swp */
@@ -2029,7 +2140,7 @@ ListNumberPlace(hw, x, y, val)
 
 	width = hw->html.font->max_bounds.lbearing +
 		hw->html.font->max_bounds.rbearing;
-	XTextExtents(currentFont, buf, strlen(buf), &dir,
+	HTMLTextExtents(currentFont, buf, strlen(buf), &dir,
 		&ascent, &descent, &all);
 	my_x = *x - (width / 2) - all.width;
 	/*
@@ -2207,7 +2318,7 @@ PreformatPlace(hw, mptr, x, y, width)
 #ifdef ASSUME_FIXED_WIDTH_PRE
 			all.width = currentFont->max_bounds.width * strlen(ptr);
 #else
-			XTextExtents(currentFont, ptr, strlen(ptr), &dir,
+			HTMLTextExtents(currentFont, ptr, strlen(ptr), &dir,
 				&ascent, &descent, &all);
 #endif /* ASSUME_FIXED_WIDTH_PRE */
 
@@ -2427,7 +2538,7 @@ FormatPlace(hw, mptr, x, y, width)
 			double_space = 0;
 #endif /* DOUBLE_SPACE_AFTER_PUNCT */
 
-			XTextExtents(currentFont, ptr, strlen(ptr), &dir,
+			HTMLTextExtents(currentFont, ptr, strlen(ptr), &dir,
 				&ascent, &descent, &all);
 
 			/*
@@ -2536,7 +2647,7 @@ FormatPlace(hw, mptr, x, y, width)
 				{
 					tptr2 = ptr;
 				}
-				XTextExtents(currentFont, tptr2,
+				HTMLTextExtents(currentFont, tptr2,
 					strlen(tptr2), &dir,
 					&ascent, &descent, &all);
 
@@ -2610,7 +2721,7 @@ FormatPlace(hw, mptr, x, y, width)
 				strcpy(spc, " ");
 			}
 
-			XTextExtents(currentFont, spc, strlen(spc), &dir,
+			HTMLTextExtents(currentFont, spc, strlen(spc), &dir,
 				&ascent, &descent, &all);
 
 			/*
@@ -2775,7 +2886,7 @@ ImagePlace(hw, mptr, x, y, width)
 			strcpy(tptr, " ");
 		}
 
-		XTextExtents(currentFont, tptr,
+		HTMLTextExtents(currentFont, tptr,
 			strlen(tptr), &dir, &ascent,
 			&descent, &all);
 		SetElement(hw, E_TEXT, currentFont,
@@ -5949,11 +6060,11 @@ PartialRefresh(hw, eptr, start_pos, end_pos, fg, bg)
 		}
 		else
 		{
-			XTextExtents(eptr->font, (char *)eptr->edata,
+			HTMLTextExtents(eptr->font, (char *)eptr->edata,
 				start_pos, &dir, &nascent, &descent, &all);
 		}
 #else
-		XTextExtents(eptr->font, (char *)eptr->edata,
+		HTMLTextExtents(eptr->font, (char *)eptr->edata,
 			start_pos, &dir, &nascent, &descent, &all);
 #endif /* ASSUME_FIXED_WIDTH_PRE */
 		x = eptr->x + all.width;
@@ -6004,11 +6115,11 @@ PartialRefresh(hw, eptr, start_pos, end_pos, fg, bg)
 			}
 			else
 			{
-				XTextExtents(eptr->font, (char *)tdata,
+				HTMLTextExtents(eptr->font, (char *)tdata,
 					tlen, &dir, &nascent, &descent, &all);
 			}
 #else
-			XTextExtents(eptr->font, (char *)tdata,
+			HTMLTextExtents(eptr->font, (char *)tdata,
 				tlen, &dir, &nascent, &descent, &all);
 #endif /* ASSUME_FIXED_WIDTH_PRE */
 		}
@@ -6149,11 +6260,11 @@ PartialRefresh(hw, eptr, start_pos, end_pos, fg, bg)
 			}
 			else
 			{
-				XTextExtents(eptr->font, (char *)tdata,
+				HTMLTextExtents(eptr->font, (char *)tdata,
 					tlen, &dir, &nascent, &descent,&all);
 			}
 #else
-			XTextExtents(eptr->font, (char *)tdata,
+			HTMLTextExtents(eptr->font, (char *)tdata,
 				tlen, &dir, &nascent, &descent,&all);
 #endif /* ASSUME_FIXED_WIDTH_PRE */
 			width = all.width;
@@ -6190,11 +6301,11 @@ PartialRefresh(hw, eptr, start_pos, end_pos, fg, bg)
 			}
 			else
 			{
-				XTextExtents(eptr->font, (char *)tdata,
+				HTMLTextExtents(eptr->font, (char *)tdata,
 					tlen, &dir, &nascent, &descent,&all);
 			}
 #else
-			XTextExtents(eptr->font, (char *)tdata,
+			HTMLTextExtents(eptr->font, (char *)tdata,
 				tlen, &dir, &nascent, &descent,&all);
 #endif /* ASSUME_FIXED_WIDTH_PRE */
 			width = all.width;
@@ -6922,7 +7033,7 @@ LocateElement(hw, x, y, pos)
 			XCharStruct all;
 
 			tx1 = eptr->x;
-			XTextExtents(eptr->font, (char *)eptr->edata,
+			HTMLTextExtents(eptr->font, (char *)eptr->edata,
 					eptr->edata_len - 1, &dir,
 					&ascent, &descent, &all);
 			tx2 = eptr->x + all.width;
@@ -7004,7 +7115,7 @@ LocateElement(hw, x, y, pos)
 		{
 			epos = rptr->edata_len - 2;
 		}
-		XTextExtents(rptr->font, (char *)rptr->edata,
+		HTMLTextExtents(rptr->font, (char *)rptr->edata,
 				(epos + 1), &dir, &ascent, &descent, &all);
 		if (x > (int)(rptr->x + all.width))
 		{
@@ -7017,7 +7128,7 @@ LocateElement(hw, x, y, pos)
 
 		while (epos >= 0)
 		{
-			XTextExtents(rptr->font, (char *)rptr->edata,
+			HTMLTextExtents(rptr->font, (char *)rptr->edata,
 				(epos + 1), &dir, &ascent, &descent, &all);
 			if ((int)(rptr->x + all.width) <= x)
 			{

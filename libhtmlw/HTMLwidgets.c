@@ -167,7 +167,7 @@ setTextSize(w, columns, lines)
 		XtNtopMargin, &tm,
 		XtNbottomMargin, &bm,
 		NULL);
-	width  = rm + lm + columns * XTextWidth(font, "0", 1);
+	width  = rm + lm + columns * HTMLTextWidth(font, "0", 1);
 	height = tm + bm + lines * FONTHEIGHT(font);
 	XtVaSetValues(w,
 		XtNwidth, width,
@@ -3572,7 +3572,7 @@ MakeWidget(hw, text, x, y, id, fptr)
 							NULL);
 					}
 
-					width = XTextWidth(font, list[i],
+					width = HTMLTextWidth(font, list[i],
 						strlen(list[i]));
 
 					if (width > maxWidth) maxWidth = width;

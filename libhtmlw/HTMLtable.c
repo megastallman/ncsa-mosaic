@@ -29,6 +29,8 @@ extern int htmlwTrace;
  */
 static void TableDraw();
 extern Pixmap InfoToImage();
+extern int HTMLTextWidth();
+extern void HTMLTextExtents();
 extern WidgetInfo *TableMakeWidget();
 extern WidgetInfo *TableMakeSelectWidget();
 extern WidgetInfo *TableMakeTextAreaWidget();
@@ -171,7 +173,7 @@ int y;
 		}
 
 	textList = ListCreate();
-        stringWidth = XTextWidth(font,text,strlen(text));
+        stringWidth = HTMLTextWidth(font,text,strlen(text));
 	if (stringWidth < width) {
 		ListAddEntry(textList,strdup(text));
 		}
@@ -179,7 +181,7 @@ int y;
 
 	    builtWidth = 0;
 	    textPtr = text;
-	    spaceWidth = XTextWidth(font," ",1);
+	    spaceWidth = HTMLTextWidth(font," ",1);
 	    *tmpBuff = '\0';
 	    while (*textPtr) {
 
@@ -191,7 +193,7 @@ int y;
 
 		GetWord(textPtr,&wordStart,&wordEnd);
 		wordLength = (int) (wordEnd - wordStart);
-		wordWidth = XTextWidth(font,wordStart, wordLength);
+		wordWidth = HTMLTextWidth(font,wordStart, wordLength);
 		if ((builtWidth + spaceWidth + wordWidth)  < width) {
 						/* then add to line */
 			if (builtWidth) {
@@ -228,7 +230,7 @@ int y;
 			while ((*wordEnd) && (width > wordWidth)) {
 				wordEnd++;
 				wordLength = (int) (wordEnd - wordStart);
-				wordWidth = XTextWidth(font,wordStart,
+				wordWidth = HTMLTextWidth(font,wordStart,
 							wordLength);
 				}
 
@@ -544,7 +546,7 @@ CellRun *run;
 					}
 				words[nwords].p = ws;
 				words[nwords].len = (int)(we - ws);
-				words[nwords].width = XTextWidth(rfont,
+				words[nwords].width = HTMLTextWidth(rfont,
 					ws, words[nwords].len);
 				words[nwords].run = r;
 				nwords++;
@@ -586,7 +588,7 @@ CellRun *run;
 		run = &field->runs[words[i].run];
 		rfont = (run->font != (XFontStruct *) 0) ?
 			run->font : field->font;
-		sp = XTextWidth(rfont, " ", 1);
+		sp = HTMLTextWidth(rfont, " ", 1);
 		if ((cx > 0)&&
 		    ((cx + sp + words[i].width) > width)) {
 			line++;
@@ -1978,7 +1980,7 @@ int expandedWidth,expandedHeight;
 		XmString cs;
 		XmFontList cfl;
 
-		capw = XTextWidth(cfont, t->caption, strlen(t->caption));
+		capw = HTMLTextWidth(cfont, t->caption, strlen(t->caption));
 		capx = x + (t->width - capw) / 2;
 		if (capx < x) {
 			capx = x;
