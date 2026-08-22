@@ -28,6 +28,8 @@ extern int htmlwTrace;
  * return 0 on failure
  */
 static void TableDraw();
+static char *TableAnchorAt();
+TableInfo *MakeTable();
 extern Pixmap InfoToImage();
 extern int HTMLTextWidth();
 extern void HTMLTextExtents();
@@ -37,11 +39,12 @@ extern WidgetInfo *TableMakeTextAreaWidget();
 extern WidgetInfo *TableMakeButtonWidget();
 
 /* append an image or widget item to a cell's run list */
-static void TableAddRunItem(field, href, image, winfo)
+static void TableAddRunItem(field, href, image, winfo, table)
 TableField *field;
 char *href;
 ImageInfo *image;
 WidgetInfo *winfo;
+TableInfo *table;
 {
 CellRun *lr;
 
@@ -53,6 +56,7 @@ CellRun *lr;
 	lr->font = (XFontStruct *) 0;
 	lr->image = image;
 	lr->winfo = winfo;
+	lr->table = (struct table_rec *) table;
 	field->run_cnt++;
 }
 
@@ -84,7 +88,6 @@ TableField *tf;
 	tf->numLines = 0;
 
 	tf->image = (ImageInfo *) 0;
-	tf->table = (struct table_rec *) 0;
 
 	return(tf);
 }
@@ -554,7 +557,8 @@ CellRun *run;
 				}
 			}
 		else if ((run->image != (ImageInfo *) 0)||
-			 (run->winfo != (WidgetInfo *) 0)) {
+			 (run->winfo != (WidgetInfo *) 0)||
+			 (run->table != (struct table_rec *) 0)) {
 			if (nwords >= wcap) {
 				wcap = wcap ? wcap * 2 : 32;
 				words = (struct cell_word *)realloc(
@@ -563,9 +567,16 @@ CellRun *run;
 				}
 			words[nwords].p = (char *) 0;
 			words[nwords].len = 0;
-			words[nwords].width =
-				(run->image != (ImageInfo *) 0) ?
-				run->image->width : run->winfo->width;
+			if (run->image != (ImageInfo *) 0) {
+				words[nwords].width = run->image->width;
+				}
+			else if (run->winfo != (WidgetInfo *) 0) {
+				words[nwords].width = run->winfo->width;
+				}
+			else {
+				words[nwords].width =
+					((TableInfo *)run->table)->width;
+				}
 			words[nwords].run = r;
 			nwords++;
 			}
@@ -635,8 +646,15 @@ CellRun *run;
 		else {
 			int ih;
 
-			ih = (run->image != (ImageInfo *) 0) ?
-				run->image->height : run->winfo->height;
+			if (run->image != (ImageInfo *) 0) {
+				ih = run->image->height;
+				}
+			else if (run->winfo != (WidgetInfo *) 0) {
+				ih = run->winfo->height;
+				}
+			else {
+				ih = ((TableInfo *)run->table)->height;
+				}
 			if (ih > lineasc[ln]) {
 				lineasc[ln] = ih;
 				}
@@ -711,9 +729,28 @@ CellRun *run;
 			    (ex >= sx)&&(ex < (sx + sw))&&
 			    (ey >= sy)&&
 			    (ey < (sy + lineasc[ln] + linedesc[ln]))) {
-				result = run->href;
+				if (run->table != (struct table_rec *) 0) {
+					/* into the nested table's grid */
+					result = TableAnchorAt(
+						(TableInfo *)run->table,
+						sx,
+						sy + lineasc[ln] -
+						((TableInfo *)run->table)->height,
+						ex, ey);
+					}
+				else {
+					result = run->href;
+					}
 				break;
 				}
+			}
+		else if (run->table != (struct table_rec *) 0) {
+			/* a nested table item: draw its grid with its
+			   bottom on the line's baseline */
+			TableDraw(hw, eptr, (TableInfo *)run->table,
+				sx,
+				sy + lineasc[ln] -
+					((TableInfo *)run->table)->height);
 			}
 		else if (run->image != (ImageInfo *) 0) {
 			ImageInfo *pic = run->image;
@@ -862,13 +899,6 @@ int accumulateColWidth;
 			field->minWidth = tm;
 			field->minHeight = th;
 			}
-		else if (field->type == F_TABLE) {
-			/* a nested table was laid out by the recursive
-			   MakeTable call; it has fixed dimensions */
-			field->maxWidth = field->table->width;
-			field->minWidth = field->table->width;
-			field->minHeight = field->table->height;
-			}
 		else {
 			/* non text */
 			field->maxWidth = 0;
@@ -1007,10 +1037,15 @@ int accumulateColWidth;
 				if (field->type == F_TEXT) {
 					int th;
 
+					/* measure at the width the draw
+					   will really flow at (it pads by
+					   FIELD_BORDER_SPACE on each side)
+					   or the last line gets clipped */
 					TableCellFlow(hw,
 						(struct ele_rec *) 0,
 						field, 0, 0,
-						accumulateColWidth,
+						accumulateColWidth -
+							2 * FIELD_BORDER_SPACE,
 						0, CELLFLOW_MEASURE,
 						0, 0, &th,
 						(int *) 0, (int *) 0);
@@ -1018,21 +1053,6 @@ int accumulateColWidth;
 						2 * FIELD_BORDER_SPACE;
 					}
 
-				/* a nested table is fixed-size content: it
-				   keeps the dimensions layout gave it
-				   (images and widgets are flow items now,
-				   floored through minWidth) */
-				if (field->type == F_TABLE) {
-					field->rowHeight = field->table->height
-						+ 2 * FIELD_BORDER_SPACE;
-					if (field->colWidth <
-						(field->table->width +
-						 2 * FIELD_BORDER_SPACE)) {
-						field->colWidth =
-							field->table->width
-							+ 2 * FIELD_BORDER_SPACE;
-						}
-					}
 
 #ifndef DISABLE_TRACE
 				if (htmlwTrace) {
@@ -1108,9 +1128,6 @@ int accumulateColWidth;
 
 			field = &(t->table[y*t->numColumns+x]);
 			fw = 0;
-			if (field->type == F_TABLE) {
-				fw = field->table->width;
-				}
 			if ((fw > 0)&&
 			    (maxWidthOfColumn < (fw +
 						2 * FIELD_BORDER_SPACE))) {
@@ -1281,9 +1298,33 @@ int len;
 	cur_font = base_font;
 	len = 0;
 	m = mptr->next;
-	while(m && (m->type != M_TABLE) && (m->type != M_TABLE_ROW) &&
+	while(m &&
+		(!((m->type == M_TABLE)&&(m->is_end))) &&
+		(m->type != M_TABLE_ROW) &&
 		(m->type != M_TABLE_DATA) && (m->type != M_TABLE_HEADER)) {
-		if (m->type == M_NONE) {
+		if ((m->type == M_TABLE)&&(!m->is_end)) {
+			/*
+			 * A nested table: build it here so it interleaves
+			 * with the cell's text as an inline item -- a
+			 * comment thread is many sibling tables in one
+			 * cell.  MakeTable consumes the marks through the
+			 * matching end tag; the loop's advance then steps
+			 * past it.
+			 */
+			TableInfo *nested;
+			struct mark_up *before = m;
+
+			nested = MakeTable(hw, &m, 0, 0);
+			if (nested != (TableInfo *) 0) {
+				TableAddRunItem(field, cur_href,
+					(ImageInfo *) 0, (WidgetInfo *) 0,
+					nested);
+				}
+			if ((m == (struct mark_up *) 0)||(m == before)) {
+				break;
+				}
+			}
+		else if (m->type == M_NONE) {
 			char *tp;
 
 			/* skip all-whitespace runs between tags */
@@ -1340,6 +1381,7 @@ int len;
 					lr->font = cur_font;
 					lr->image = (ImageInfo *) 0;
 					lr->winfo = (WidgetInfo *) 0;
+					lr->table = (struct table_rec *) 0;
 					field->run_cnt++;
 					}
 				}
@@ -1362,7 +1404,8 @@ int len;
 				}
 			if ((wp != (WidgetInfo *) 0)&&(wp->w != NULL)) {
 				TableAddRunItem(field, (char *) 0,
-					(ImageInfo *) 0, wp);
+					(ImageInfo *) 0, wp,
+					(TableInfo *) 0);
 				}
 			if ((m == (struct mark_up *) 0)||
 			    (m->type == M_TABLE)||
@@ -1458,7 +1501,8 @@ int len;
 							(img->width > 0)) {
 							TableAddRunItem(field,
 							    cur_href, img,
-							    (WidgetInfo *) 0);
+							    (WidgetInfo *) 0,
+							    (TableInfo *) 0);
 							}
 						    }
 						}
@@ -1477,7 +1521,8 @@ int len;
 							TableAddRunItem(field,
 							    (char *) 0,
 							    (ImageInfo *) 0,
-							    wp);
+							    wp,
+							    (TableInfo *) 0);
 							}
 						}
 					break;
@@ -1570,44 +1615,20 @@ char *tptr;
 
 		if ((m->type == M_TABLE) && (!m->is_end) && (m != *mptr)) {
 			/*
-			 * A nested table: build it recursively and attach
-			 * it to the current cell.  The recursive call
-			 * consumes the marks up to the matching end tag,
-			 * so the inner rows never leak into this grid.
+			 * A nested table: the cell scanner has already
+			 * built it as an inline item of its cell.  Just
+			 * skip its marks so the inner rows never leak
+			 * into this grid.
 			 */
-			TableInfo *nested;
-			struct mark_up *before;
+			int depth = 1;
 
-			before = m;
-			nested = MakeTable(hw, &m, x, y);
-			if (nested != (TableInfo *) 0) {
-				if ((field != (TableField *) 0)&&
-					(field->table == (struct table_rec *) 0)) {
-					field->type = F_TABLE;
-					field->table = (struct table_rec *) nested;
+			m = m->next;
+			while ((m != (struct mark_up *) 0)&&(depth > 0)) {
+				if (m->type == M_TABLE) {
+					depth += (m->is_end) ? -1 : 1;
 					}
-				/* with no enclosing cell (or a second
-				   table in one cell) the content is
-				   dropped -- same as any other markup
-				   this simple cell model cannot hold */
-				}
-			else if (m == before) {
-				/*
-				 * The recursion failed without consuming
-				 * anything (out of memory); skip the inner
-				 * marks so they cannot masquerade as our
-				 * own rows.
-				 */
-				int depth = 1;
-
-				m = m->next;
-				while ((m != (struct mark_up *) 0)&&(depth > 0)) {
-					if (m->type == M_TABLE) {
-						depth += (m->is_end) ? -1 : 1;
-						}
-					if (depth > 0) {
-						m = m->next;
-						}
+				if (depth > 0) {
+					m = m->next;
 					}
 				}
 			if (m == (struct mark_up *) 0) {
@@ -1862,14 +1883,6 @@ int yy;
 		return -1;
 		}
 
-	if (field->type == F_TABLE) {
-		/* recursively draw a nested table inside this cell */
-		TableDraw(hw, eptr, (TableInfo *)field->table,
-			x + FIELD_BORDER_SPACE,
-			y + FIELD_BORDER_SPACE);
-		return 0;
-		}
-
 	if (field->type != F_TEXT) { /* everything else is flow content */
 		return -1;
 		}
@@ -2046,9 +2059,10 @@ int expandedWidth,expandedHeight;
 					  expandedWidth,
 					  expandedHeight);
 
-			/* a nested TableDraw may have changed the line
-			   width; restore ours for the remaining borders */
-			if (field->type == F_TABLE) {
+			/* a nested TableDraw (a table item in a cell's
+			   flow) may have changed the line width; restore
+			   ours for the remaining borders */
+			if (field->run_cnt > 0) {
 				XSetLineAttributes(XtDisplay(hw),
 						   hw->html.drawGC,
 						   t->borders,
@@ -2130,13 +2144,6 @@ int expandedWidth,expandedHeight;
 			    (ex < (vertMarker + expandedWidth))&&
 			    (ey >= horizMarker)&&
 			    (ey < (horizMarker + expandedHeight))) {
-				if (field->type == F_TABLE) {
-					return(TableAnchorAt(
-						(TableInfo *)field->table,
-						vertMarker+FIELD_BORDER_SPACE,
-						horizMarker+FIELD_BORDER_SPACE,
-						ex, ey));
-					}
 				if ((field->type == F_TEXT)&&
 				    (field->run_cnt > 0)) {
 					int th;

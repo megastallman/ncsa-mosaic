@@ -254,6 +254,7 @@ typedef struct cell_run {
 	XFontStruct *font;	/* the font its inline markup asked for */
 	ImageInfo *image;	/* an inline image item */
 	WidgetInfo *winfo;	/* an inline form widget item */
+	struct table_rec *table; /* a nested table item */
 } CellRun;
 
 typedef struct table_field {
@@ -282,7 +283,7 @@ typedef struct table_field {
 	int		numLines;	/* for formatted text */
 
 	ImageInfo	*image;
-	struct table_rec *table;	/* F_TABLE: a nested table */
+
 } TableField;
 
 typedef struct table_rec {
