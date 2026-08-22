@@ -246,6 +246,12 @@ typedef struct wid_rec {
 
 typedef enum { F_NONE, F_TEXT, F_IMAGE, F_WIDGET, F_TABLE} FieldType;
 
+/* one stretch of cell text sharing an anchor (or lack of one) */
+typedef struct cell_run {
+	char	*text;		/* whitespace-flattened text */
+	char	*href;		/* the anchor it sits in, or NULL */
+} CellRun;
+
 typedef struct table_field {
         int colSpan;            /* number of cells this spans vertically */
         int rowSpan;            /* number of cells this spans horizontally */
@@ -263,7 +269,10 @@ typedef struct table_field {
 	/* contents */
 	FieldType	type;
 	char		*text;
-	char		*href;		/* anchor this cell's content is in */
+	char		*href;		/* first anchor; used for image and
+					   widget cells */
+	CellRun		*runs;		/* F_TEXT: per-anchor text runs */
+	int		run_cnt;
 	XFontStruct	*font;
 	char		**formattedText;
 	int		numLines;	/* for formatted text */

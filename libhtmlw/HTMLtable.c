@@ -73,6 +73,8 @@ TableField *tf;
 	tf->type = F_NONE;
 	tf->text = (char *) 0;
 	tf->href = (char *) 0;
+	tf->runs = (CellRun *) 0;
+	tf->run_cnt = 0;
 	tf->font = (XFontStruct *) 0;
 	tf->formattedText = (char **) 0;
 	tf->numLines = 0;
@@ -454,6 +456,233 @@ register int width;
 	return(maxWidth);
 }
 
+/*
+ * Flow a text cell's runs into `width` pixels, greedy word-wrapped.
+ * One deterministic layout serves three callers, so what is measured
+ * is exactly what is drawn and exactly what is hit-tested:
+ *   CELLFLOW_MEASURE: return the flowed height in *retheight.
+ *   CELLFLOW_DRAW:    draw the words at x,y (view coords), linked
+ *                     runs in the anchor color with an underline,
+ *                     the block vertically centered in `height`.
+ *   CELLFLOW_HIT:     return the href of the run under ex,ey.
+ */
+
+#define CELLFLOW_MEASURE	0
+#define CELLFLOW_DRAW		1
+#define CELLFLOW_HIT		2
+
+struct cell_word {
+	char *p;
+	int len;
+	int width;
+	int run;
+	int ln;		/* line this word landed on */
+	int lx;		/* x offset within its line */
+};
+
+static char *TableCellFlow(hw, eptr, field, x, y, width, height,
+			mode, ex, ey, retheight)
+HTMLWidget hw;
+struct ele_rec *eptr;
+TableField *field;
+int x, y;
+int width, height;
+int mode;
+int ex, ey;
+int *retheight;
+{
+struct cell_word *words;
+int nwords, wcap;
+int *linew;
+int i, j, r;
+int spaceWidth, lineHeight, baseLine;
+int cx, line, nlines, totalh, starty;
+char *result;
+
+	if (retheight != (int *) 0) {
+		*retheight = 0;
+		}
+	if ((field->run_cnt <= 0)||(field->font == (XFontStruct *) 0)) {
+		return((char *) 0);
+		}
+	if (width < 16) {
+		width = 16;
+		}
+
+	/* split every run into words */
+	words = (struct cell_word *) 0;
+	nwords = 0;
+	wcap = 0;
+	for (r = 0; r < field->run_cnt; r++) {
+		char *p = field->runs[r].text;
+		char *ws, *we;
+
+		while ((p != (char *) 0)&&(*p != '\0')) {
+			GetWord(p, &ws, &we);
+			if (we == ws) {
+				break;
+				}
+			if (nwords >= wcap) {
+				wcap = wcap ? wcap * 2 : 32;
+				words = (struct cell_word *)realloc(
+					(char *)words,
+					wcap * sizeof(struct cell_word));
+				}
+			words[nwords].p = ws;
+			words[nwords].len = (int)(we - ws);
+			words[nwords].width = XTextWidth(field->font,
+				ws, words[nwords].len);
+			words[nwords].run = r;
+			nwords++;
+			p = we;
+			}
+		}
+	if (nwords == 0) {
+		if (words != (struct cell_word *) 0) {
+			free((char *)words);
+			}
+		return((char *) 0);
+		}
+
+	spaceWidth = XTextWidth(field->font, " ", 1);
+	lineHeight = FONTHEIGHT(field->font);
+	baseLine = field->font->max_bounds.ascent;
+
+	/* greedy line breaking */
+	cx = 0;
+	line = 0;
+	for (i = 0; i < nwords; i++) {
+		if ((cx > 0)&&
+		    ((cx + spaceWidth + words[i].width) > width)) {
+			line++;
+			cx = 0;
+			}
+		words[i].ln = line;
+		words[i].lx = cx ? (cx + spaceWidth) : 0;
+		cx = words[i].lx + words[i].width;
+		}
+	nlines = line + 1;
+	totalh = nlines * lineHeight;
+	if (retheight != (int *) 0) {
+		*retheight = totalh;
+		}
+	if (mode == CELLFLOW_MEASURE) {
+		free((char *)words);
+		return((char *) 0);
+		}
+
+	/* each line's used width, for center/right alignment */
+	linew = (int *)malloc(nlines * sizeof(int));
+	for (i = 0; i < nlines; i++) {
+		linew[i] = 0;
+		}
+	for (i = 0; i < nwords; i++) {
+		linew[words[i].ln] = words[i].lx + words[i].width;
+		}
+
+	starty = y + (height - totalh) / 2;
+	if (starty < y) {
+		starty = y;
+		}
+
+	/* walk segments: consecutive words on one line in one run */
+	result = (char *) 0;
+	for (i = 0; i < nwords; ) {
+		int sx, sy, sw, off;
+		CellRun *run;
+
+		j = i;
+		while ((j < nwords)&&(words[j].ln == words[i].ln)&&
+			(words[j].run == words[i].run)) {
+			j++;
+			}
+		run = &field->runs[words[i].run];
+
+		if (field->alignment == ALIGN_CENTER) {
+			off = (width - linew[words[i].ln]) / 2;
+			}
+		else if (field->alignment == ALIGN_RIGHT) {
+			off = width - linew[words[i].ln];
+			}
+		else {
+			off = 0;
+			}
+		if (off < 0) {
+			off = 0;
+			}
+		sx = x + off + words[i].lx;
+		sy = starty + words[i].ln * lineHeight;
+		sw = words[j-1].lx + words[j-1].width - words[i].lx;
+
+		if (mode == CELLFLOW_HIT) {
+			if ((ex >= sx)&&(ex < (sx + sw))&&
+			    (ey >= sy)&&(ey < (sy + lineHeight))) {
+				result = run->href;
+				break;
+				}
+			}
+		else {
+			/* join the segment's words with single spaces:
+			   core font widths are additive, so the joined
+			   string measures exactly the layout */
+			char *seg;
+			int sl, k;
+			XmString ttd;
+			XmFontList tftd;
+
+			sl = 0;
+			for (k = i; k < j; k++) {
+				sl += words[k].len + 1;
+				}
+			seg = (char *)malloc(sl + 1);
+			sl = 0;
+			for (k = i; k < j; k++) {
+				if (k > i) {
+					seg[sl++] = ' ';
+					}
+				memcpy(seg + sl, words[k].p, words[k].len);
+				sl += words[k].len;
+				}
+			seg[sl] = '\0';
+
+			XSetForeground(XtDisplay(hw), hw->html.drawGC,
+				(run->href != (char *) 0) ?
+				hw->html.anchor_fg : eptr->fg);
+			XSetBackground(XtDisplay(hw), hw->html.drawGC,
+				eptr->bg);
+			XSetFont(XtDisplay(hw), hw->html.drawGC,
+				field->font->fid);
+			ttd = XmStringCreateLocalized(seg);
+			tftd = XmFontListCreate(field->font,
+				XmSTRING_DEFAULT_CHARSET);
+			XmStringDraw(XtDisplay(hw),
+				XtWindow(hw->html.view),
+				tftd, ttd, hw->html.drawGC,
+				sx, sy, /* XmStringDraw wants the TOP */
+				XmStringWidth(tftd, ttd),
+				XmALIGNMENT_BEGINNING,
+				XmSTRING_DIRECTION_L_TO_R, NULL);
+			XmStringFree(ttd);
+			XmFontListFree(tftd);
+			if (run->href != (char *) 0) {
+				XDrawLine(XtDisplay(hw),
+					XtWindow(hw->html.view),
+					hw->html.drawGC,
+					sx, sy + baseLine + 1,
+					sx + sw, sy + baseLine + 1);
+				}
+			free(seg);
+			}
+
+		i = j;
+		}
+
+	free((char *)linew);
+	free((char *)words);
+	return(result);
+}
+
+
 TableCalculateDimensions(hw,t,pageWidth)
 HTMLWidget hw;
 TableInfo *t;
@@ -619,22 +848,8 @@ int accumulateColWidth;
 				}
 			}
 
-		/* take care of formattedText */
-		for (y=0; y < t->numRows; y++) {
-			for (x=0; x < t->numColumns; x++) {
-			    field = &(t->table[y * t->numColumns + x]);
-			    field->formattedText =
-				    (char **) malloc(sizeof(char *));
-			    if (field->text) {
-				field->formattedText[0]= strdup(field->text);
-				field->numLines = 1;
-				}
-			    else {
-				field->formattedText[0]= (char *) 0;
-				field->numLines = 0;
-				}
-			    }
-			}
+		/* (cell text is flowed from its runs at draw time now;
+		   no pre-formatted line array to build) */
 		}
 	else {
 	/* will have to squeeze fields downward to fit on page */
@@ -674,18 +889,18 @@ int accumulateColWidth;
                                         ((float) CalculateMaxWidthOfColumn(t,xx))));
 				    }
 
-#ifndef DISABLE_TRACE
-				if (htmlwTrace) {
-					fprintf(stderr,"About to call PourText\n");
-				}
-#endif
+				if (field->type == F_TEXT) {
+					int th;
 
-				PourText(field->text,field->font,
-					accumulateColWidth,
-					&(field->rowHeight),
-					 hw->html.percent_vert_space,
-					&(field->formattedText),
-					&(field->numLines));
+					TableCellFlow(hw,
+						(struct ele_rec *) 0,
+						field, 0, 0,
+						accumulateColWidth,
+						0, CELLFLOW_MEASURE,
+						0, 0, &th);
+					field->rowHeight = th +
+						2 * FIELD_BORDER_SPACE;
+					}
 
 				/* fixed-size contents (nested tables and
 				   images) cannot be squeezed: they keep
@@ -965,6 +1180,8 @@ int len;
    text, so it must not be clean_text()ed a second time (that eats
    literal '&'s). */
 
+	char *cur_href = (char *) 0;	/* anchor currently open */
+
 	field->font = hw->html.plain_font; /* default font */
 	len = 0;
 	m = mptr->next;
@@ -981,6 +1198,7 @@ int len;
 				}
 			if ((tp != (char *) 0)&&(*tp)) {
 				int rl = strlen(m->text);
+				CellRun *lr;
 
 				if (field->text == (char *) 0) {
 					field->text = (char *)malloc(rl + 1);
@@ -995,6 +1213,41 @@ int len;
 						m->text);
 					len += rl + 1;
 					}
+
+				/* record the run with the anchor it sits
+				   in; merge with the last run when the
+				   anchor is the same */
+				lr = (field->run_cnt > 0) ?
+					&field->runs[field->run_cnt-1] :
+					(CellRun *) 0;
+				if ((lr != (CellRun *) 0)&&
+				    (((lr->href == (char *) 0)&&
+				      (cur_href == (char *) 0))||
+				     ((lr->href != (char *) 0)&&
+				      (cur_href != (char *) 0)&&
+				      (strcmp(lr->href, cur_href) == 0)))) {
+					lr->text = (char *)realloc(lr->text,
+						strlen(lr->text) + rl + 2);
+					strcat(lr->text, " ");
+					strcat(lr->text, m->text);
+					}
+				else {
+					field->runs = (CellRun *)realloc(
+						field->runs,
+						(field->run_cnt + 1) *
+						sizeof(CellRun));
+					lr = &field->runs[field->run_cnt];
+					lr->text = strdup(m->text);
+					lr->href = (cur_href != (char *) 0) ?
+						strdup(cur_href) : (char *) 0;
+					field->run_cnt++;
+					}
+				}
+			}
+		else if ((m->is_end)&&(m->type == M_ANCHOR)) {
+			if (cur_href != (char *) 0) {
+				free(cur_href);
+				cur_href = (char *) 0;
 				}
 			}
 		else if (!m->is_end) {
@@ -1010,13 +1263,19 @@ int len;
 					break;
 			case M_ANCHOR:
 					field->font = hw->html.bold_font;
-					/* first link in the cell wins; the
-					   whole cell becomes that link */
+					if (cur_href != (char *) 0) {
+						free(cur_href);
+						}
+					cur_href = (m->start != (char *) 0) ?
+						ParseMarkTag(m->start,
+							MT_ANCHOR, "HREF") :
+						(char *) 0;
+					/* the first link also serves whole-
+					   cell content (images, widgets) */
 					if ((field->href == (char *) 0)&&
-					    (m->start != (char *) 0)) {
-						field->href = ParseMarkTag(
-							m->start,
-							MT_ANCHOR, "HREF");
+					    (cur_href != (char *) 0)) {
+						field->href =
+							strdup(cur_href);
 						}
 					break;
 			case M_IMAGE:
@@ -1083,6 +1342,7 @@ int len;
 		}
 	else if (field->text != (char *) 0) {
 		char *p;
+		int ri;
 
 		/* flatten embedded newlines/tabs: the single-line
 		   display branch draws the raw string */
@@ -1091,11 +1351,22 @@ int len;
 				*p = ' ';
 				}
 			}
+		for (ri = 0; ri < field->run_cnt; ri++) {
+			for (p = field->runs[ri].text; *p; p++) {
+				if (isspace((unsigned char)*p)) {
+					*p = ' ';
+					}
+				}
+			}
 		field->type = F_TEXT;
 		}
 	else if ((field->image != (ImageInfo *) 0)&&
 		 (field->image->width > 0)) {
 		field->type = F_IMAGE;
+		}
+
+	if (cur_href != (char *) 0) {
+		free(cur_href);
 		}
 }
 
@@ -1508,66 +1779,19 @@ int yy;
 	height -= (2 * FIELD_BORDER_SPACE);
 	y += FIELD_BORDER_SPACE;
 
+	XSetLineAttributes(XtDisplay(hw),hw->html.drawGC,1,LineSolid,
+		CapNotLast,JoinMiter);
 
-	lineHeight = FONTHEIGHT(field->font);
-	baseLine = field->font->max_bounds.ascent;
-	placeY = y + (height - (lineHeight * field->numLines))/2;
-	for (yy = 0; yy < field->numLines; yy++) {
-		stringWidth = XTextWidth(field->font,field->formattedText[yy],
-					strlen(field->formattedText[yy]));
+	/* flow the runs into the cell; each run draws with its own
+	   anchor color and underline */
+	{
+		int th;
 
-		switch(field->alignment) {
-			case ALIGN_LEFT:
-					placeX = x;
-					break;
-			case ALIGN_CENTER:
-					placeX = x + (width - stringWidth)/2;
-					break;
-			case ALIGN_RIGHT:
-					placeX = x + width - stringWidth;
-					break;
-			}
-/*
-		placeY = y + height/2 +
-	   			(field->font->max_bounds.ascent
-				- field->font->max_bounds.descent)/2;
-*/
+		TableCellFlow(hw, eptr, field, x, y, width, height,
+			CELLFLOW_DRAW, 0, 0, &th);
+	}
 
-		XSetLineAttributes(XtDisplay(hw),hw->html.drawGC,1,LineSolid,
-			CapNotLast,JoinMiter);
-		XSetBackground(XtDisplay(hw), hw->html.drawGC, eptr->bg);
-		XSetForeground(XtDisplay(hw), hw->html.drawGC,
-			(field->href != (char *) 0) ?
-				hw->html.anchor_fg : eptr->fg);
-		XSetFont(XtDisplay(hw), hw->html.drawGC, field->font->fid);
-		XmString ttd=XmStringCreateLocalized(field->formattedText[yy]);
-                XmFontList tftd=XmFontListCreate(field->font,XmSTRING_DEFAULT_CHARSET); 
-                XmStringDraw(XtDisplay(hw),
-                            XtWindow(hw->html.view),
-                            tftd,
-                            ttd,
-                            hw->html.drawGC,
-                            placeX,
-                            placeY, /* XmStringDraw wants the TOP,
-                                       not the baseline */
-                            XmStringWidth(tftd,ttd),
-                            XmALIGNMENT_BEGINNING,
-                            XmSTRING_DIRECTION_L_TO_R,
-                            NULL);
-               XmStringFree(ttd);
-               XmFontListFree(tftd);
-
-		if (field->href != (char *) 0) {
-			/* underline the cell's text like other anchors */
-			XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
-				hw->html.drawGC,
-				placeX, placeY + baseLine + 1,
-				placeX + stringWidth, placeY + baseLine + 1);
-			}
-
-		placeY += lineHeight;
-		}
-
+	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
 	XSetLineAttributes(XtDisplay(hw),
 			   hw->html.drawGC,
 			   eptr->table_data->borders,
@@ -1810,6 +2034,27 @@ int expandedWidth,expandedHeight;
 						vertMarker+FIELD_BORDER_SPACE,
 						horizMarker+FIELD_BORDER_SPACE,
 						ex, ey));
+					}
+				if ((field->type == F_TEXT)&&
+				    (field->run_cnt > 0)) {
+					int th;
+
+					/* per-run: only the link's own
+					   words are hot, with the same
+					   flow the draw used */
+					return(TableCellFlow(
+						(HTMLWidget) 0,
+						(struct ele_rec *) 0,
+						field,
+						vertMarker +
+							FIELD_BORDER_SPACE,
+						horizMarker +
+							FIELD_BORDER_SPACE,
+						expandedWidth -
+							2*FIELD_BORDER_SPACE,
+						expandedHeight -
+							2*FIELD_BORDER_SPACE,
+						CELLFLOW_HIT, ex, ey, &th));
 					}
 				return(field->href);
 				}
