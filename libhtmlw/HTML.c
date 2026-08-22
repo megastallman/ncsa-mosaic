@@ -3452,10 +3452,10 @@ SelectStart(w, event, params, num_params)
 			SetAnchor(hw);
 		}
 		/*
-		 * Else if we are on an image we can't select text so
-		 * pretend we got eptr==NULL, and exit here.
+		 * Else if we are on an image or a table we can't select
+		 * text so pretend we got eptr==NULL, and exit here.
 		 */
-		else if (eptr->type == E_IMAGE)
+		else if ((eptr->type == E_IMAGE)||(eptr->type == E_TABLE))
 		{
 			hw->html.new_start = NULL;
 			hw->html.new_end = NULL;
@@ -3717,10 +3717,11 @@ ExtendAdjust(w, event, params, num_params)
 	eptr = LocateElement(hw, MoEvent->x, MoEvent->y, &epos);
 
 	/*
-	 * If we are on an image pretend we are nowhere
-	 * and just return;
+	 * If we are on an image or a table (tables carry no selectable
+	 * text) pretend we are nowhere and just return;
 	 */
-	if ((eptr != NULL)&&(eptr->type == E_IMAGE))
+	if ((eptr != NULL)&&
+		((eptr->type == E_IMAGE)||(eptr->type == E_TABLE)))
 	{
 		return;
 	}
@@ -3819,10 +3820,11 @@ ExtendEnd(w, event, params, num_params)
 	}
 
 	/*
-	 * If we are on an image, pretend we are nowhere
-	 * and NULL out the eptr
+	 * If we are on an image or a table (no selectable text),
+	 * pretend we are nowhere and NULL out the eptr
 	 */
-	if ((eptr != NULL)&&(eptr->type == E_IMAGE))
+	if ((eptr != NULL)&&
+		((eptr->type == E_IMAGE)||(eptr->type == E_TABLE)))
 	{
 		eptr = NULL;
 	}
@@ -3911,10 +3913,10 @@ ExtendEnd(w, event, params, num_params)
 					hw->html.font->max_bounds.width,
 					hw->html.margin_width);
 				}
-				XStoreBuffer(XtDisplay((Widget)hw),
-					text, strlen(text), buffer);
 				if (text != NULL)
 				{
+					XStoreBuffer(XtDisplay((Widget)hw),
+						text, strlen(text), buffer);
 					free(text);
 				}
 			}
