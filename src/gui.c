@@ -1235,6 +1235,87 @@ static void pointer_motion_callback (Widget w, char *href)
 }
 
 
+/* Build a multipart/form-data body for cbdata: ordinary values as
+   form-data parts, file values (attribute_is_file) as file parts
+   with the file's bytes.  Returns malloc'd body, its length in
+   *retlen, and the boundary used in boundary (caller-provided
+   buffer). */
+static char *
+mo_build_multipart (WbFormCallbackData *cbdata, char *boundary, int *retlen)
+{
+  char *body = NULL;
+  int len = 0, cap = 0;
+  int i;
+  char head[1024];
+
+#define MP_APPEND(ptr, cnt) \
+  do { \
+    if ((len + (cnt) + 1) > cap) { \
+      cap = (len + (cnt) + 1) * 2 + 4096; \
+      body = (char *)(body ? realloc (body, cap) : malloc (cap)); \
+    } \
+    memcpy (body + len, (ptr), (cnt)); \
+    len += (cnt); \
+  } while (0)
+
+  sprintf (boundary, "----MosaicFormBoundary%08lx%08lx",
+           (unsigned long) time (NULL), (unsigned long) getpid ());
+
+  for (i = 0; i < cbdata->attribute_count; i++)
+    {
+      char *name = cbdata->attribute_names[i];
+      char *value = cbdata->attribute_values[i];
+      int isfile = (cbdata->attribute_is_file != NULL) &&
+        cbdata->attribute_is_file[i];
+
+      if (!name)
+        continue;
+      if (isfile && value && *value)
+        {
+          FILE *fp;
+          char *base;
+
+          base = strrchr (value, '/');
+          base = base ? (base + 1) : value;
+          sprintf (head,
+                   "--%s\r\nContent-Disposition: form-data; "
+                   "name=\"%.256s\"; filename=\"%.256s\"\r\n"
+                   "Content-Type: application/octet-stream\r\n\r\n",
+                   boundary, name, base);
+          MP_APPEND (head, (int) strlen (head));
+          fp = fopen (value, "rb");
+          if (fp != NULL)
+            {
+              char fbuf[8192];
+              int got;
+
+              while ((got = (int) fread (fbuf, 1, sizeof (fbuf), fp)) > 0)
+                MP_APPEND (fbuf, got);
+              fclose (fp);
+            }
+          MP_APPEND ("\r\n", 2);
+        }
+      else
+        {
+          sprintf (head,
+                   "--%s\r\nContent-Disposition: form-data; "
+                   "name=\"%.256s\"\r\n\r\n",
+                   boundary, name);
+          MP_APPEND (head, (int) strlen (head));
+          if (value)
+            MP_APPEND (value, (int) strlen (value));
+          MP_APPEND ("\r\n", 2);
+        }
+    }
+  sprintf (head, "--%s--\r\n", boundary);
+  MP_APPEND (head, (int) strlen (head));
+  body[len] = '\0';
+#undef MP_APPEND
+
+  *retlen = len;
+  return body;
+}
+
 XmxCallback (submit_form_callback)
 {
   mo_window *win = NULL;
@@ -1393,6 +1474,38 @@ XmxCallback (submit_form_callback)
     else
       HTReferer = NULL;
   }
+
+  /* multipart/form-data: required for file uploads, honored when the
+     form asks for it too */
+  if (do_post_urlencoded)
+    {
+      int want_multipart = 0;
+
+      if (enctype &&
+          !my_strncasecmp (enctype, "multipart/form-data", 19))
+        want_multipart = 1;
+      if (cbdata->attribute_is_file)
+        for (i = 0; i < cbdata->attribute_count; i++)
+          if (cbdata->attribute_is_file[i])
+            want_multipart = 1;
+      if (want_multipart)
+        {
+          extern int post_data_len;
+          char boundary[80];
+          char cthdr[160];
+          char *body;
+          int blen = 0;
+
+          body = mo_build_multipart (cbdata, boundary, &blen);
+          sprintf (cthdr, "multipart/form-data; boundary=%s", boundary);
+          post_data_len = blen;
+          mo_post_access_document (win, url, cthdr, body);
+          post_data_len = 0;
+          free (body);
+          if (query) free (query);
+          return;
+        }
+    }
 
   if (do_post_urlencoded)
     {

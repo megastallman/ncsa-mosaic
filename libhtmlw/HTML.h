@@ -161,6 +161,7 @@ typedef struct fcall_rec {
 	int attribute_count;
 	char **attribute_names;
 	char **attribute_values;
+	int *attribute_is_file;	/* 1 where the value names a file to upload */
 } WbFormCallbackData;
 
 

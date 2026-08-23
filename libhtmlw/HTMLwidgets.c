@@ -99,6 +99,7 @@
 #define	W_LIST		7
 #define	W_JOT		8
 #define	W_HIDDEN	9
+#define	W_FILE		10
 
 
 extern void NewJot();
@@ -251,6 +252,11 @@ AddNewForm(hw, fptr)
 }
 
 
+/* parallel to the last CollectSubmitInfo result: 1 where the value
+   is a filename from an <input type=file> (the submit callback
+   encodes those as multipart/form-data) */
+int *LastSubmitIsFile = NULL;
+
 int
 CollectSubmitInfo(fptr, name_list, value_list)
 	FormInfo *fptr;
@@ -284,6 +290,12 @@ CollectSubmitInfo(fptr, name_list, value_list)
 		sizeof(char *));
 	cbdata.attribute_values = (char **)malloc(cbdata.attribute_count *
 		sizeof(char *));
+	if (LastSubmitIsFile != NULL)
+	{
+		free((char *)LastSubmitIsFile);
+	}
+	LastSubmitIsFile = (int *)calloc((cbdata.attribute_count > 0) ?
+		cbdata.attribute_count : 1, sizeof(int));
 
 	if (fptr->start == 0)
 	{
@@ -310,7 +322,9 @@ CollectSubmitInfo(fptr, name_list, value_list)
 	/***   cvarela@ncsa.uiuc.edu:  August 17, 1994
                Adding multiple submit buttons support
          ***   changed to match widgets -- amb ***/
-           if (wptr->name)
+	   /* DISABLED controls (insensitive widgets) do not submit */
+           if ((wptr->name)&&
+               ((wptr->w == NULL)||(XtIsSensitive(wptr->w))))
 
 	    {
 		Widget child;
@@ -326,8 +340,10 @@ CollectSubmitInfo(fptr, name_list, value_list)
 #endif /* MOTIF */
 
 		cbdata.attribute_names[cnt] = wptr->name;
+		LastSubmitIsFile[cnt] = (wptr->type == W_FILE);
 		switch(wptr->type)
 		{
+			case W_FILE:
 			case W_TEXTFIELD:
 #ifdef MOTIF
 				cbdata.attribute_values[cnt] =
@@ -652,6 +668,7 @@ ImageSubmitForm(fptr, event, name, x, y)
 	sprintf(valstr, "%d", y);
 	cbdata.attribute_values[cnt] = (char *)malloc(strlen(valstr) + 1);
 	strcpy(cbdata.attribute_values[cnt], valstr);
+	cbdata.attribute_is_file = NULL;
 
 	XtCallCallbackList ((Widget)hw, hw->html.form_callback,
 		(XtPointer)&cbdata);
@@ -687,6 +704,7 @@ CBSubmitForm(w, client_data, call_data)
 
 	cbdata.attribute_count = CollectSubmitInfo(fptr,
 		&cbdata.attribute_names, &cbdata.attribute_values);
+	cbdata.attribute_is_file = LastSubmitIsFile;
 
 	XtCallCallbackList ((Widget)hw, hw->html.form_callback,
 		(XtPointer)&cbdata);
@@ -3188,6 +3206,14 @@ MakeWidget(hw, text, x, y, id, fptr)
 			}
 		}
 
+		/* <input type=file> renders as the text field the
+		   unknown-type fallback made; tag it so the submit
+		   knows to upload the named file */
+		if ((type_str != NULL)&&(type == W_TEXTFIELD)&&
+			(my_strcasecmp(type_str, "file") == 0))
+		{
+			type = W_FILE;
+		}
 		if (type_str != NULL)
 		{
 			free(type_str);
@@ -3209,6 +3235,27 @@ MakeWidget(hw, text, x, y, id, fptr)
                           XmNtopShadowColor, hw->html.top_color_SAVE,
                           XmNbottomShadowColor, hw->html.bottom_color_SAVE,
                           NULL);
+
+			/* DISABLED controls are insensitive (and the form
+			   submit skips insensitive widgets); READONLY text
+			   shows but does not edit */
+			tptr = ParseMarkTag(text, MT_INPUT, "DISABLED");
+			if (tptr != NULL)
+			{
+				XtSetSensitive(w, False);
+				free(tptr);
+			}
+			tptr = ParseMarkTag(text, MT_INPUT, "READONLY");
+			if (tptr != NULL)
+			{
+				if ((type == W_TEXTFIELD)||
+					(type == W_PASSWORD))
+				{
+					XtVaSetValues(w, XmNeditable,
+						False, NULL);
+				}
+				free(tptr);
+			}
 		}
 		else
 		{

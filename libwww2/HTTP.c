@@ -73,6 +73,7 @@ int put_file_size=0;
 FILE *put_fp;
 char *post_content_type = NULL;
 char *post_data = NULL;
+int post_data_len = 0;	/* >0: post_data is binary-safe, this long */
 extern BOOL using_gateway;    /* are we using an HTTP gateway? */
 extern char *proxy_host_fix;  /* for the Host: header */
 extern BOOL using_proxy;      /* are we using an HTTP proxy gateway? */

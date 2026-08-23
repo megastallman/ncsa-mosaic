@@ -60,6 +60,7 @@ extern int put_file_size;
 extern FILE *put_fp;
 extern char *post_content_type;
 extern char *post_data;
+extern int post_data_len;
 
 extern BOOL using_proxy;
 extern BOOL using_gateway;
@@ -452,6 +453,10 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
     {
       curl_easy_setopt (handle, CURLOPT_POSTFIELDS,
                         post_data ? post_data : "lose");
+      /* multipart bodies carry file bytes; strlen would truncate them */
+      curl_easy_setopt (handle, CURLOPT_POSTFIELDSIZE,
+                        (long) ((post_data_len > 0) ? post_data_len :
+                                (post_data ? (int) strlen (post_data) : 4)));
       sprintf (line, "Content-Type: %s",
                post_content_type ? post_content_type : "lose");
       req_headers = curl_slist_append (req_headers, line);
