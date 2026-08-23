@@ -483,6 +483,7 @@ struct delay_rec {
 #define M_BUTTON	64 /* HTML5 <button>; becomes a fake INPUT widget */
 #define M_META		65 /* <meta>; only http-equiv=refresh is acted on */
 #define M_FONT		66 /* <font>; only COLOR= is acted on */
+#define M_COL		67 /* <col>/<colgroup>; WIDTH and SPAN */
 
 /* syntax of Mark types */
 #define	MT_TITLE	"title"

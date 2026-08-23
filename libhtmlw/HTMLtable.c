@@ -2122,6 +2122,9 @@ Pixel rowBg;			/* BGCOLOR from the current <tr> */
 int rowHasBg;
 int rowValign;			/* VALIGN from the current <tr> */
 int rowReqHeight;		/* HEIGHT from the current <tr> */
+int colpx[64], colpct[64];	/* <col>/<colgroup> WIDTHs in order */
+int colcnt;
+int ci;
 
 	if (((*mptr)->type != M_TABLE) || ((*mptr)->is_end)) {
 		return(0);
@@ -2192,6 +2195,7 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 	rowHasBg = 0;
 	rowValign = ALIGN_MIDDLE;
 	rowReqHeight = 0;
+	colcnt = 0;
 	m = *mptr;
 	field = (TableField *) 0;
 	while (m && (!((m->type == M_TABLE) && (m->is_end)))) {
@@ -2267,6 +2271,46 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 							*cp = ' ';
 							}
 						}
+					}
+				}
+			}
+
+		else if ((m->type == M_COL)&&(!m->is_end)&&
+			 (m->start != (char *) 0)) {
+			/* <col>/<colgroup>: column width requests, in
+			   document order.  A colgroup only counts when it
+			   carries a width itself (else its <col> children
+			   speak for it). */
+			char *ctag;
+			int cpx, cpct, cspan;
+
+			ctag = (my_strncasecmp(m->start, "colgroup", 8) == 0) ?
+				"colgroup" : "col";
+			val = ParseMarkTag(m->start, ctag, "WIDTH");
+			TableParseWidth(val, &cpx, &cpct);
+			if (val != (char *) 0) {
+				free(val);
+				}
+			cspan = 1;
+			val = ParseMarkTag(m->start, ctag, "SPAN");
+			if (val != (char *) 0) {
+				cspan = atoi(val);
+				if (cspan < 1) {
+					cspan = 1;
+					}
+				if (cspan > 64) {
+					cspan = 64;
+					}
+				free(val);
+				}
+			if ((ctag[3] == 'g')&&(cpx == 0)&&(cpct == 0)) {
+				/* transparent colgroup */
+				}
+			else {
+				while ((cspan-- > 0)&&(colcnt < 64)) {
+					colpx[colcnt] = cpx;
+					colpct[colcnt] = cpct;
+					colcnt++;
 					}
 				}
 			}
@@ -2497,6 +2541,17 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 
 	if (!(TableCleanUp(t,tableList))) {
 		return(0); /* out of memory */
+		}
+
+	/* <col>/<colgroup> widths become column requests, stamped on
+	   the first row's fields (a cell's own WIDTH= still wins: the
+	   distribution takes the max request in the column) */
+	for (ci = 0; (ci < t->numColumns)&&(ci < colcnt); ci++) {
+		field = &(t->table[ci]);
+		if ((field->reqWidth == 0)&&(field->reqPercent == 0)) {
+			field->reqWidth = colpx[ci];
+			field->reqPercent = colpct[ci];
+			}
 		}
 
 	/* free up memory from tableList since TableCleanUp
