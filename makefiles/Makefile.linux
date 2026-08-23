@@ -97,9 +97,19 @@ xinc = -I/usr/X11R6/include
 #### For Linux -- You must set "LD_LIBRARY_PATH" to include the path to
 ####   your X libs, or some may not be found by the loader. Check the
 ####   loader with "ldd Mosaic" after you build.
-xlibs = -L/usr/X11R6/lib -lXext -lXpm -lXm -lXmu -lXt -lX11 -lICE -lSM
-static_motif_xlibs = -L/usr/X11R6/lib -lXext -lXpm /usr/X11R6/lib/libXm.a -lXmu -lXt -lX11 -lICE -lSM
-static_xlibs = /usr/X11R6/lib/libXpm.a /usr/X11R6/lib/libXm.a /usr/X11R6/lib/libXmu.a /usr/X11R6/lib/libXt.a /usr/X11R6/lib/libXext.a /usr/X11R6/lib/libX11.a /usr/X11R6/lib/libSM.a /usr/X11R6/lib/libICE.a
+xlibs = -lXext -lXpm -lXm -lXmu -lXt -lX11 -lICE -lSM
+#### "static motif": embed just libXm.a (the library a target box most
+#### often lacks), everything else dynamic.  -Bstatic/-Bdynamic pick the
+#### .a off the normal search path -- no hardcoded /usr/X11R6 paths, which
+#### no longer exist on modern multiarch systems.
+static_motif_xlibs = -Wl,-Bstatic -lXm -Wl,-Bdynamic -lXext -lXpm -lXmu -lXt -lX11 -lICE -lSM -lXft -lfontconfig -lXrender -lfreetype
+#### "static": embed the whole X/Motif client stack; the low-level
+#### transport (xcb/Xau/Xdmcp) and glibc stay dynamic.  Note we do NOT
+#### pass a global -static: that forces glibc static, which breaks
+#### curl's getaddrinfo at runtime and needs static deps that are not
+#### shipped.  This still yields a binary that runs where Motif/Xpm/etc
+#### are not installed.
+static_xlibs = -Wl,-Bstatic -lXm -lXpm -lXmu -lXt -lXext -lSM -lICE -lX11 -Wl,-Bdynamic -lxcb -lXau -lXdmcp -lXft -lfontconfig -lXrender -lfreetype
 #### For BSD/386:
 # xlibs = -L/usr/X11/lib -lXm -lXmu -lXt -lX11
 #### For Motorola SVR4:
@@ -292,7 +302,7 @@ src-quantifyd::
 
 src-static::
 	@echo --- Building src-static
-	cd src; $(MAKE) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags) -static" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic"
+	cd src; $(MAKE) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags)" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic"
 
 src-static-motif::
 	@echo --- Building src-static-motif
@@ -300,7 +310,7 @@ src-static-motif::
 
 src-static-purifyd::
 	@echo --- Building src-static-purifyd
-	cd src; $(MAKE) PURIFY=$(PURIFY) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags) -static" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic-p"
+	cd src; $(MAKE) PURIFY=$(PURIFY) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags)" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic-p"
 
 src-static-motif-purifyd::
 	@echo --- Building src-static-motif-purifyd
@@ -308,7 +318,7 @@ src-static-motif-purifyd::
 
 src-static-quantifyd::
 	@echo --- Building src-static-quantifyd
-	cd src; $(MAKE) PURIFY=$(QUANTIFY) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags) -static" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic-q"
+	cd src; $(MAKE) PURIFY=$(QUANTIFY) CC=$(CC) RANLIB=$(RANLIB) LDFLAGS="$(ldflags)" CFLAGS="$(CFLAGS) $(customflags) $(xinc) $(jpegflags) $(dtmflags) $(hdfflags) $(pngflags) $(krbflags) -I.. -I../libXmx -I../libwww2" AUX_CFLAGS=$(knrflag) X_LIBS="$(static_xlibs)" SYS_LIBS="$(sockslibs) $(syslibs)" DTM_LIBS="$(dtmlibs)" HDF_LIBS="$(hdflibs)" WAIS_LIBS="$(waislibs)" LIBWWW_DIR=../libwww2 JPEG_LIBS="$(jpeglibs)" PNG_LIBS="$(pnglibs)" KRB_LIBS="$(krblibs)" LIBNUT_DIR=../libnut MOSAIC="Mosaic-q"
 
 src-static-motif-quantifyd::
 	@echo --- Building src-static-motif-quantifyd

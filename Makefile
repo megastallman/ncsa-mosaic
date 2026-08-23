@@ -121,6 +121,15 @@ p_unicos: rm_and_touch
 q_unicos: rm_and_touch
 	$(MAKE) -f makefiles/Makefile.unicos q_static_motifd DEV_ARCH=unicos
 
+## Hyphenated aliases: the help text (and habit) uses hyphens, but the
+## real targets historically used underscores.  Accept both.
+freebsd-static: freebsd_static
+freebsd-static-motif: freebsd_static_motif
+netbsd-static: netbsd_static
+netbsd-static-motif: netbsd_static_motif
+linux-static: linux_static
+linux-static-motif: linux_static_motif
+
 clean:
 	cd libXmx; $(MAKE) clean
 	cd libdtm; $(MAKE) clean
