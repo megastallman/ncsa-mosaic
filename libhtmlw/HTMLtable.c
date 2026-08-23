@@ -68,6 +68,7 @@ TableField *tf;
 		return(0);
 		}
 	tf->alignment = ALIGN_CENTER;
+	tf->valign = ALIGN_MIDDLE;
 	tf->colSpan = 1;
 	tf->rowSpan = 1;
 	tf->contVert = False;
@@ -129,6 +130,28 @@ int n;
 			}
 		*px = n;
 		}
+}
+
+
+/* parse a VALIGN= attribute value; dflt comes back for anything
+   unrecognized (baseline behaves like top here) */
+static int TableParseValign(val, dflt)
+char *val;
+int dflt;
+{
+	if (val == (char *) 0) {
+		return(dflt);
+		}
+	if (caseless_equal(val, "top")||caseless_equal(val, "baseline")) {
+		return(ALIGN_TOP);
+		}
+	if (caseless_equal(val, "bottom")) {
+		return(ALIGN_BOTTOM);
+		}
+	if (caseless_equal(val, "middle")||caseless_equal(val, "center")) {
+		return(ALIGN_MIDDLE);
+		}
+	return(dflt);
 }
 
 
@@ -777,7 +800,16 @@ CellRun *run;
 		return((char *) 0);
 		}
 
-	starty = y + (height - totalh) / 2;
+	/* the cell's VALIGN places the flowed block in the cell */
+	if (field->valign == ALIGN_TOP) {
+		starty = y;
+		}
+	else if (field->valign == ALIGN_BOTTOM) {
+		starty = y + height - totalh;
+		}
+	else {
+		starty = y + (height - totalh) / 2;
+		}
 	if (starty < y) {
 		starty = y;
 		}
@@ -1848,6 +1880,7 @@ List tableList;			/* list of Row Lists */
 char *tptr;
 Pixel rowBg;			/* BGCOLOR from the current <tr> */
 int rowHasBg;
+int rowValign;			/* VALIGN from the current <tr> */
 
 	if (((*mptr)->type != M_TABLE) || ((*mptr)->is_end)) {
 		return(0);
@@ -1906,6 +1939,7 @@ int rowHasBg;
 	rowCount=1;
 	rowBg = (Pixel) 0;
 	rowHasBg = 0;
+	rowValign = ALIGN_MIDDLE;
 	m = *mptr;
 	field = (TableField *) 0;
 	while (m && (!((m->type == M_TABLE) && (m->is_end)))) {
@@ -1994,6 +2028,9 @@ int rowHasBg;
 					rowHasBg = 1;
 					}
 				}
+			/* likewise the row's VALIGN */
+			val = ParseMarkTag(m->start,MT_TABLE_ROW,"valign");
+			rowValign = TableParseValign(val, ALIGN_MIDDLE);
 
 			/* expand at end of row */
 			while(TableExpandFields(tableList, rowList,
@@ -2068,6 +2105,9 @@ int rowHasBg;
 				field->has_bg = True;
 				}
 
+			val = ParseMarkTag(m->start,MT_TABLE_DATA,"valign");
+			field->valign = TableParseValign(val, rowValign);
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -2125,6 +2165,9 @@ int rowHasBg;
 				field->bg = rowBg;
 				field->has_bg = True;
 				}
+
+			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"valign");
+			field->valign = TableParseValign(val, rowValign);
 
 			TableFieldSetAttributes(hw,field,m);
 

@@ -263,6 +263,7 @@ typedef struct table_field {
         Boolean contVert;       /* does this cell continue from previous */
         Boolean contHoriz;      /* does this cell continue from previous */
         int alignment;          /* contents alignment */
+        int valign;             /* vertical alignment (ALIGN_TOP/MIDDLE/BOTTOM) */
         int maxWidth;
         int minWidth;
         int maxHeight;
