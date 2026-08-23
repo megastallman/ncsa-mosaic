@@ -123,6 +123,15 @@ int ucs2utf8(unsigned int ucs,char code[4])
 	      ucs = ' ';
 	    }
 
+	  /* beyond the BMP (emoji and friends): the code[] buffers are
+	     sized for 3-byte sequences and the bitmap fonts have no
+	     such glyphs anyway -- substitute the replacement character
+	     instead of emitting nothing and gluing the neighbors */
+	  if (ucs >= 65536)
+	    {
+	      ucs = 0xFFFD;
+	    }
+
           if (ucs<128)
 	    {
 	      code[0]=(char)ucs;
