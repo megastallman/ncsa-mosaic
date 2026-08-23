@@ -310,7 +310,77 @@ static int Subscript;
 static XFontStruct *nonScriptFont;
 static int InDocHead;
 static int InUnderlined;
-static int Centered; // SAM
+/* horizontal block alignment: <center> and ALIGN= on <div> and the
+   headers nest (stack); ALIGN= on <p> reaches to the next block or
+   </p> (ParaAlign).  0 (ALIGN_BOTTOM) means none/left. */
+static int AlignStack[64];
+static int AlignDepth;
+static int ParaAlign;
+
+static int CurrentBlockAlign()
+{
+	if (ParaAlign)
+	{
+		return(ParaAlign);
+	}
+	if (AlignDepth > 0)
+	{
+		return(AlignStack[AlignDepth - 1]);
+	}
+	return(0);
+}
+
+static void AlignPush(al)
+	int al;
+{
+	ParaAlign = 0;	/* a new block ends the paragraph's reach */
+	if (al == 0)
+	{
+		al = CurrentBlockAlign();	/* inherit */
+	}
+	if (AlignDepth < 64)
+	{
+		AlignStack[AlignDepth++] = al;
+	}
+}
+
+static void AlignPop()
+{
+	ParaAlign = 0;
+	if (AlignDepth > 0)
+	{
+		AlignDepth--;
+	}
+}
+
+/* ALIGN= of a block tag as ALIGN_CENTER/ALIGN_RIGHT (0 = none;
+   left and justify need nothing done) */
+static int ParseBlockAlign(mark, tag)
+	struct mark_up *mark;
+	char *tag;
+{
+	char *val;
+	int al = 0;
+
+	if (mark->start == (char *) 0)
+	{
+		return(0);
+	}
+	val = ParseMarkTag(mark->start, tag, "ALIGN");
+	if (val != (char *) 0)
+	{
+		if (caseless_equal(val, "center"))
+		{
+			al = ALIGN_CENTER;
+		}
+		else if (caseless_equal(val, "right"))
+		{
+			al = ALIGN_RIGHT;
+		}
+		free(val);
+	}
+	return(al);
+}
 
 /*
  * Turned out we were taking WAY too much time mallocing and freeing
@@ -380,7 +450,6 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 	eptr->dashed_underline = DashedUnderlines;
 	eptr->indent_level = IndentLevel;
 
-	if(Centered && type != E_TABLE) eptr->alignment = ALIGN_CENTER;
 
 	switch(type)
 	{
@@ -1029,7 +1098,6 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 	eptr->indent_level = IndentLevel;
 
 	// SAM
-	if(Centered && type != E_TABLE) eptr->alignment = ALIGN_CENTER;
 	// SAM
 
 	switch(type)
@@ -1743,34 +1811,53 @@ LinefeedPlace(hw, x, y)
 	HTMLWidget hw;
 	int *x, *y;
 {
-	// SAM
-#if 0
-	if(Centered) {
-		struct ele_rec *eptr;
-		int width;
+	/*
+	 * The line is finished: if the block being formatted is
+	 * centered or right-aligned, shift everything on this line by
+	 * the leftover space (half of it for centering).  Widgets are
+	 * positioned from their own record, so shift that too.
+	 */
+	{
+		int ba;
 
-		printf("LineFeedPlace\n");
-		for(eptr = Current; eptr; eptr = eptr->next) {
-			printf("type %d x %d y %d width %d bwidth %d alignment %d start %d end %d\n",
-				   eptr->type, eptr->x, eptr->y, eptr->width, eptr->bwidth,
-				   eptr->alignment,
-				   eptr->start_pos, eptr->end_pos);
-			printf("\t'%.40s'\n", eptr->edata);
+		ba = CurrentBlockAlign();
+		if (((ba == ALIGN_CENTER)||(ba == ALIGN_RIGHT))&&
+			(Current != NULL)&&
+			(Current->line_number == LineNumber))
+		{
+			int shift;
+			struct ele_rec *eptr;
 
-			// SAM Simple and wrong
-			if(eptr->width) {
-				// SAM How to get canvas width?
-				if(eptr->width >= 640)
-					printf("TOO WIDE\n");
-				else {
-					int offset = (640 - eptr->width) / 2;
-					eptr->x += offset;
+			shift = Width - MarginW - *x;
+			if (ba == ALIGN_CENTER)
+			{
+				shift = shift / 2;
+			}
+			if (shift > 0)
+			{
+				for (eptr = Current; (eptr != NULL)&&
+					(eptr->line_number == LineNumber);
+					eptr = eptr->prev)
+				{
+					eptr->x = eptr->x + shift;
+					if (eptr->widget_data != NULL)
+					{
+						eptr->widget_data->x =
+						    eptr->widget_data->x +
+						    shift;
+					}
 				}
+				/*
+				 * The linefeed element about to be made
+				 * must sit after the shifted content: its
+				 * refresh erases the line from its x to
+				 * the right edge, and at the unshifted x
+				 * it would wipe the line it ends.
+				 */
+				*x = *x + shift;
 			}
 		}
 	}
-#endif
-	// SAM
 
 	/*
 	 * At the end of every line check if we have a new MaxWidth
@@ -4211,10 +4298,11 @@ int *x, *y;
 		}
 		break;
 	case M_CENTER:
+		ConditionalLineFeed(hw, x, y, 1);
 		if (mark->is_end)
-			Centered = 0;
+			AlignPop();
 		else
-			Centered = 1;
+			AlignPush(ALIGN_CENTER);
 		break;
 /* amb - ignore text inside a HEAD element */
 	case M_DOC_HEAD:
@@ -4263,11 +4351,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h1"));
 			PushFont(currentFont);
 			font = hw->html.header1_font;
 		}
@@ -4279,11 +4369,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h2"));
 			PushFont(currentFont);
 			font = hw->html.header2_font;
 		}
@@ -4295,11 +4387,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h3"));
 			PushFont(currentFont);
 			font = hw->html.header3_font;
 		}
@@ -4311,11 +4405,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h4"));
 			PushFont(currentFont);
 			font = hw->html.header4_font;
 		}
@@ -4327,11 +4423,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h5"));
 			PushFont(currentFont);
 			font = hw->html.header5_font;
 		}
@@ -4343,11 +4441,13 @@ int *x, *y;
 			font = PopFont();
 			NewFont(font);
 			currentFont = font;
+			AlignPop();
 			ConditionalLineFeed(hw, x, y, 2);
 		}
 		else
 		{
 			ConditionalLineFeed(hw, x, y, 2);
+			AlignPush(ParseBlockAlign(mark, "h6"));
 			PushFont(currentFont);
 			font = hw->html.header6_font;
 		}
@@ -4465,6 +4565,10 @@ int *x, *y;
 	case M_PARAGRAPH:
 		ConditionalLineFeed(hw, x, y, 1);
 		ConditionalLineFeed(hw, x, y, 2);
+		if (mark->is_end)
+			ParaAlign = 0;
+		else
+			ParaAlign = ParseBlockAlign(mark, "p");
 		break;
 		/*
 		 * Just insert the image for now
@@ -5646,6 +5750,10 @@ int *x, *y;
 		 */
 	case M_DIV:
 		ConditionalLineFeed(hw, x, y, 1);
+		if (mark->is_end)
+			AlignPop();
+		else
+			AlignPush(ParseBlockAlign(mark, "div"));
 		break;
 		/*
 		 * M_SKIP contents were swallowed by the parser;
@@ -5762,6 +5870,8 @@ FormatAll(hw, Fwidth)
 	Underlines = 0;
 	DashedUnderlines = False;
 	Width = width;
+	AlignDepth = 0;
+	ParaAlign = 0;
 	TextIndent = MarginW;
 	ElementId = 0;
 	WidgetId = 0;
