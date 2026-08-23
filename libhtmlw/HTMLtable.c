@@ -1061,23 +1061,25 @@ int accumulateColWidth;
 		   than it is drawn at wraps to more lines than the
 		   draw, leaving dead space at the bottom of the table.
 
-		   Distribute pageWidth with the floors taken out first:
-		   a column pinned at its longest-word floor (plus the
-		   padding the draw indents by) is frozen, and only the
-		   still-shrinkable columns divide what remains.  The
+		   Standard auto-layout distribution: every column starts
+		   at its floor (longest word, or a nested table's
+		   min-content, plus the padding the draw indents by) and
+		   the page width left over is dealt out in proportion to
+		   each column's DEFICIT -- how far below its natural
+		   width it sits -- never past natural.  The floors only
+		   overflow the page when they alone do, and any pixels
+		   one column cannot use flow to the next tightest.  (The
 		   naive shrink-then-floor-each-column-alone pushed the
-		   total past the page by the sum of the floors that
-		   bit (opennet's front page: bullet and date columns
-		   floored, the headline column got its proportional
-		   share anyway and poked past the right edge). */
+		   total past the page by the sum of the floors that bit:
+		   opennet's front-page headlines poked past the right
+		   edge.) */
 		{
-			int *cmax, *cmin, *cfroze;
-			int spent, maxsum, changed, w;
-			float scale;
+			int *cmax, *cmin, *cw;
+			int surplus, deficit, give, w, progressed;
 
 			cmax = (int *)malloc(t->numColumns * sizeof(int));
 			cmin = (int *)malloc(t->numColumns * sizeof(int));
-			cfroze = (int *)malloc(t->numColumns * sizeof(int));
+			cw = (int *)malloc(t->numColumns * sizeof(int));
 			for (x = 0; x < t->numColumns; x++) {
 				cmax[x] = CalculateMaxWidthOfColumn(t,x) +
 					2 * FIELD_BORDER_SPACE;
@@ -1092,49 +1094,57 @@ int accumulateColWidth;
 				if (cmax[x] < cmin[x]) {
 					cmax[x] = cmin[x];
 					}
-				cfroze[x] = 0;
+				cw[x] = cmin[x];
 				}
-			scale = 0.0;
-			do {
-				changed = 0;
-				spent = 0;
-				maxsum = 0;
-				for (x = 0; x < t->numColumns; x++) {
-					if (cfroze[x]) {
-						spent += cmin[x];
-						}
-					else {
-						maxsum += cmax[x];
-						}
-					}
-				if (maxsum > 0) {
-					scale = ((float)(pageWidth - spent)) /
-						((float)maxsum);
-					if (scale > 1.0) {
-						scale = 1.0;
-						}
-					for (x = 0; x < t->numColumns; x++) {
-						if ((!cfroze[x])&&
-						    ((scale * (float)cmax[x]) <
-						     (float)cmin[x])) {
-							cfroze[x] = 1;
-							changed = 1;
-							}
-						}
-					}
-				} while (changed);
+			surplus = pageWidth;
 			for (x = 0; x < t->numColumns; x++) {
-				w = cfroze[x] ? cmin[x] :
-					(int)(scale * (float)cmax[x]);
+				surplus -= cmin[x];
+				}
+			while (surplus > 0) {
+				deficit = 0;
+				for (x = 0; x < t->numColumns; x++) {
+					deficit += cmax[x] - cw[x];
+					}
+				if (deficit <= 0) {
+					break;
+					}
+				progressed = 0;
+				for (x = 0; (x < t->numColumns)&&
+					    (surplus > 0); x++) {
+					if (cw[x] >= cmax[x]) {
+						continue;
+						}
+					give = (int)((float)surplus *
+						(float)(cmax[x] - cw[x]) /
+						(float)deficit);
+					if (give < 1) {
+						give = 1;
+						}
+					if (give > (cmax[x] - cw[x])) {
+						give = cmax[x] - cw[x];
+						}
+					if (give > surplus) {
+						give = surplus;
+						}
+					cw[x] += give;
+					surplus -= give;
+					progressed = 1;
+					}
+				if (!progressed) {
+					break;
+					}
+				}
+
+			for (x = 0; x < t->numColumns; x++) {
 				for (y = 0; y < t->numRows; y++) {
 					field = &(t->table[y*t->numColumns+x]);
-					field->colWidth = w;
+					field->colWidth = cw[x];
 					field->rowHeight = 0;
 					}
 				}
 			free((char *)cmax);
 			free((char *)cmin);
-			free((char *)cfroze);
+			free((char *)cw);
 		}
 
 		/* divy up width with adjacent continue Horizontal fields*/
