@@ -133,6 +133,8 @@ typedef struct dtype_rec {
 	int type;		/* D_NONE, D_TITLE, D_TEXT, D_OLIST, D_ULIST */
 	int count;
 	int compact;
+	int style;		/* OL TYPE=1/a/A/i/I; UL TYPE disc/circle/square
+				   as 'd'/'c'/'s'; 0 = default look */
 	struct dtype_rec *next;
 } DescRec;
 
@@ -2160,9 +2162,10 @@ AdjustBaseLine()
  * list item. Create and add the element record for it.
  */
 void
-BulletPlace(hw, x, y)
+BulletPlace(hw, x, y, style)
 	HTMLWidget hw;
 	int *x, *y;
+	int style;	/* UL TYPE=: 'd','c','s' or 0 for the default */
 {
 	int width, l_height;
 
@@ -2186,6 +2189,8 @@ BulletPlace(hw, x, y)
 	NeedSpace = 0;
 	width = hw->html.font->max_bounds.width;
 	SetElement(hw, E_BULLET, hw->html.font, *x, *y, (char *)NULL, NULL, NULL,IMAGE_DEFAULT_BORDER);
+	/* remember an explicit UL TYPE= for the refresh */
+	Current->bwidth = style;
 	LineHeight = l_height;
 /*
  * This should reall be here, but it is a hack for headers on list
@@ -2318,17 +2323,77 @@ HRulePlace(hw, mptr, x, y, width)
  * list item. Create and add the element record for it.
  */
 void
-ListNumberPlace(hw, x, y, val)
+ListNumberPlace(hw, x, y, val, style)
 	HTMLWidget hw;
 	int *x, *y;
 	int val;
+	int style;	/* OL TYPE=: 'a','A','i','I' or 0 for numbers */
 {
 	int width, my_x;
 	int dir, ascent, descent;
 	XCharStruct all;
-	char buf[20];
+	char buf[40];
 
-	sprintf(buf, "%d.", val);
+	if ((style == 'a')||(style == 'A'))
+	{
+		/* bijective base 26: 1=a .. 26=z, 27=aa */
+		char tmp[16];
+		int i = 0, v = val, j;
+
+		if (v < 1)
+		{
+			v = 1;
+		}
+		while ((v > 0)&&(i < 15))
+		{
+			v--;
+			tmp[i++] = (char)((style == 'a' ? 'a' : 'A') +
+				(v % 26));
+			v = v / 26;
+		}
+		for (j = 0; j < i; j++)
+		{
+			buf[j] = tmp[i - 1 - j];
+		}
+		buf[i] = '.';
+		buf[i + 1] = '\0';
+	}
+	else if ((style == 'i')||(style == 'I'))
+	{
+		static int rv[] = {1000,900,500,400,100,90,50,40,10,9,5,4,1};
+		static char *rs[] = {"m","cm","d","cd","c","xc","l","xl",
+			"x","ix","v","iv","i"};
+		int v = val, i;
+		char *bp = buf;
+
+		if ((v < 1)||(v > 3999))
+		{
+			sprintf(buf, "%d.", val);
+		}
+		else
+		{
+			for (i = 0; i < 13; i++)
+			{
+				while (v >= rv[i])
+				{
+					char *cp;
+
+					for (cp = rs[i]; *cp; cp++)
+					{
+						*bp++ = (style == 'I') ?
+							toupper((unsigned char)*cp) : *cp;
+					}
+					v -= rv[i];
+				}
+			}
+			*bp++ = '.';
+			*bp = '\0';
+		}
+	}
+	else
+	{
+		sprintf(buf, "%d.", val);
+	}
 
 	width = hw->html.font->max_bounds.lbearing +
 		hw->html.font->max_bounds.rbearing;
@@ -5414,15 +5479,55 @@ int *x, *y;
 			/*
 			 * Save the old state, and start a new
 			 */
+			dptr->style = 0;
 			if (type == M_NUM_LIST)
 			{
+				char *val;
+
 				dptr->type = D_OLIST;
 				dptr->count = 1;
+				val = ParseMarkTag(mark->start, "ol", "START");
+				if (val != NULL)
+				{
+					if (atoi(val) > 0)
+					{
+						dptr->count = atoi(val);
+					}
+					free(val);
+				}
+				val = ParseMarkTag(mark->start, "ol", "TYPE");
+				if (val != NULL)
+				{
+					if (strchr("aAiI", val[0]) != NULL)
+					{
+						dptr->style = val[0];
+					}
+					free(val);
+				}
 			}
 			else
 			{
+				char *val;
+
 				dptr->type = D_ULIST;
 				dptr->count = 0;
+				val = ParseMarkTag(mark->start, "ul", "TYPE");
+				if (val != NULL)
+				{
+					if (caseless_equal(val, "disc"))
+					{
+						dptr->style = 'd';
+					}
+					else if (caseless_equal(val, "circle"))
+					{
+						dptr->style = 'c';
+					}
+					else if (caseless_equal(val, "square"))
+					{
+						dptr->style = 's';
+					}
+					free(val);
+				}
 			}
 			dptr->next = ListData;
 			ListData = dptr;
@@ -5446,13 +5551,25 @@ int *x, *y;
 			 */
 			if (ListData->type == D_OLIST)
 			{
+				char *val;
+
+				val = ParseMarkTag(mark->start, "li", "VALUE");
+				if (val != NULL)
+				{
+					if (atoi(val) > 0)
+					{
+						ListData->count = atoi(val);
+					}
+					free(val);
+				}
 				ListNumberPlace(hw, x, y,
-								ListData->count);
+						ListData->count,
+						ListData->style);
 				ListData->count++;
 			}
 			else
 			{
-				BulletPlace(hw, x, y);
+				BulletPlace(hw, x, y, ListData->style);
 			}
 		}
 		break;
@@ -6689,7 +6806,32 @@ BulletRefresh(hw, eptr)
  *   and not filled.
  * --SWP
  */
-	if (eptr->indent_level && (eptr->indent_level % 2)) { /* odd & !0 */
+	/* an explicit UL TYPE= (stored in bwidth: 'd'isc, 'c'ircle,
+	   's'quare) overrides the per-level alternation */
+	if (eptr->bwidth == 'd' || eptr->bwidth == 'c' || eptr->bwidth == 's')
+	{
+		XSetLineAttributes(XtDisplay(hw), hw->html.drawGC, 1,
+			LineSolid, CapButt, JoinBevel);
+		if (eptr->bwidth == 'd')
+		{
+			XFillArc(XtDisplay(hw), XtWindow(hw->html.view),
+				hw->html.drawGC, (x1 - width), y1,
+				(width / 2), (width / 2), 0, 23040);
+		}
+		else if (eptr->bwidth == 'c')
+		{
+			XDrawArc(XtDisplay(hw), XtWindow(hw->html.view),
+				hw->html.drawGC, (x1 - width), y1,
+				(width / 2), (width / 2), 0, 23040);
+		}
+		else
+		{
+			XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
+				hw->html.drawGC, (x1 - width), y1,
+				(width / 2), (width / 2));
+		}
+	}
+	else if (eptr->indent_level && (eptr->indent_level % 2)) { /* odd & !0 */
 		XSetLineAttributes(XtDisplay(hw),
 				   hw->html.drawGC,
 				   1,
