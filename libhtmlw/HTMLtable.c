@@ -89,7 +89,42 @@ TableField *tf;
 
 	tf->image = (ImageInfo *) 0;
 
+	tf->reqWidth = 0;
+	tf->reqPercent = 0;
+
 	return(tf);
+}
+
+
+/* parse a WIDTH= attribute value: "50%" style into *pct, plain
+   pixels into *px; nonsense is ignored */
+static void TableParseWidth(val, px, pct)
+char *val;
+int *px, *pct;
+{
+int n;
+
+	*px = 0;
+	*pct = 0;
+	if (val == (char *) 0) {
+		return;
+		}
+	n = atoi(val);
+	if (n <= 0) {
+		return;
+		}
+	if (strchr(val, '%') != (char *) 0) {
+		if (n > 100) {
+			n = 100;
+			}
+		*pct = n;
+		}
+	else {
+		if (n > 30000) {
+			n = 30000;
+			}
+		*px = n;
+		}
 }
 
 
@@ -927,7 +962,33 @@ int minWidthOfRow;
 int numAdjacent;
 float percentToShrink;
 int accumulateColWidth;
+int hasreq;
 
+
+	/* honor the table's own WIDTH= attribute as its target width;
+	   percent is of the space we were given, and a pixel request
+	   never grows the target past that space */
+	if (t->reqPercent > 0) {
+		pageWidth = (pageWidth * t->reqPercent) / 100;
+		}
+	else if ((t->reqWidth > 0)&&(t->reqWidth < pageWidth)) {
+		pageWidth = t->reqWidth;
+		}
+	if (pageWidth < 16) {
+		pageWidth = 16;
+		}
+
+	/* cell WIDTH= requests are honored by the distribution branch */
+	hasreq = 0;
+	for (y = 0; (y < t->numRows)&&(!hasreq); y++) {
+		for (x = 0; x < t->numColumns; x++) {
+			field = &(t->table[y * t->numColumns + x]);
+			if ((field->reqWidth > 0)||(field->reqPercent > 0)) {
+				hasreq = 1;
+				break;
+				}
+			}
+		}
 
 	/* calculate max and min width for each field*/
 	sumMaxWidth = 0;
@@ -1008,8 +1069,9 @@ int accumulateColWidth;
 
 
 
-	/* fit table to page */
-	if (sumMaxWidth < pageWidth ) {
+	/* fit table to page; cell width requests always go through the
+	   distribution branch, which is what honors them */
+	if ((sumMaxWidth < pageWidth)&&(!hasreq)) {
 		/* fits on the page, set all fields to use max width */
 
 		for (x = 0; x < t->numColumns; x++) {
@@ -1076,6 +1138,7 @@ int accumulateColWidth;
 		{
 			int *cmax, *cmin, *cw;
 			int surplus, deficit, give, w, progressed;
+			int creq;
 
 			cmax = (int *)malloc(t->numColumns * sizeof(int));
 			cmin = (int *)malloc(t->numColumns * sizeof(int));
@@ -1084,12 +1147,35 @@ int accumulateColWidth;
 				cmax[x] = CalculateMaxWidthOfColumn(t,x) +
 					2 * FIELD_BORDER_SPACE;
 				cmin[x] = 2 * FIELD_BORDER_SPACE;
+				creq = 0;
 				for (y = 0; y < t->numRows; y++) {
-					w = t->table[y*t->numColumns+x].minWidth
+					field = &(t->table[y*t->numColumns+x]);
+					w = field->minWidth
 						+ 2 * FIELD_BORDER_SPACE;
 					if (w > cmin[x]) {
 						cmin[x] = w;
 						}
+					w = field->reqWidth;
+					if (field->reqPercent > 0) {
+						w = (pageWidth *
+						     field->reqPercent) / 100;
+						}
+					/* a spanning cell's request is
+					   split across its columns */
+					if ((w > 0)&&(field->colSpan > 1)) {
+						w /= field->colSpan;
+						}
+					if (w > creq) {
+						creq = w;
+						}
+					}
+				/* a WIDTH= request replaces the column's
+				   natural width as the distribution target:
+				   it caps a wide column and grows a narrow
+				   one, but the longest-word floor still
+				   wins over a request that is too small */
+				if (creq > 0) {
+					cmax[x] = creq;
 					}
 				if (cmax[x] < cmin[x]) {
 					cmax[x] = cmin[x];
@@ -1751,6 +1837,8 @@ char *tptr;
 	else {
 		t->borders = 0;
 		}
+	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"WIDTH");
+	TableParseWidth(tptr, &t->reqWidth, &t->reqPercent);
 	tableList = ListCreate();
 	rowList = ListCreate();
 	ListAddEntry(tableList, rowList);
@@ -1894,6 +1982,11 @@ char *tptr;
 				   asked otherwise (th centers) */
 				field->alignment = ALIGN_LEFT;
 				}
+
+			val = ParseMarkTag(m->start,MT_TABLE_DATA,"width");
+			TableParseWidth(val, &field->reqWidth,
+				&field->reqPercent);
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -1937,6 +2030,11 @@ char *tptr;
 			else {
 				field->alignment = ALIGN_CENTER;
 				}
+
+			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"width");
+			TableParseWidth(val, &field->reqWidth,
+				&field->reqPercent);
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);

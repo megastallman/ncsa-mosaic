@@ -269,6 +269,8 @@ typedef struct table_field {
         int minHeight;
         int colWidth;           /* uniform width for all element in this col*/
         int rowHeight;          /* uniform hieght for all element in the row*/
+	int reqWidth;		/* WIDTH= attribute, pixels (0 = unset) */
+	int reqPercent;		/* WIDTH= attribute, percent (0 = unset) */
 	Boolean	header;		/* is this field created with <TH> or <TD> */
 
 	/* contents */
@@ -296,6 +298,8 @@ typedef struct table_rec {
 	int	bwidth,bheight;
 	int	numColumns;
 	int	numRows;
+	int	reqWidth;	/* WIDTH= attribute, pixels (0 = unset) */
+	int	reqPercent;	/* WIDTH= attribute, percent (0 = unset) */
 	TableField *table;
 } TableInfo;
 
