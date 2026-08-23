@@ -490,9 +490,16 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
 
   if (sendReferer && HTReferer)
     {
-      /* HTTP Referer field, specifies back-link URL   - amb */
-      sprintf (line, "Referer: %s", HTReferer);
-      req_headers = curl_slist_append (req_headers, line);
+      /* HTTP Referer field, specifies back-link URL   - amb.
+         Built on the heap: a long URL would overrun line[]. */
+      char *rhdr = (char *)malloc (strlen (HTReferer) + 16);
+
+      if (rhdr)
+        {
+          sprintf (rhdr, "Referer: %s", HTReferer);
+          req_headers = curl_slist_append (req_headers, rhdr);
+          free (rhdr);
+        }
       HTReferer = NULL;
     }
 
