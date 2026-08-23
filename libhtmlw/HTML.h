@@ -279,6 +279,7 @@ typedef struct table_field {
 	int reqHeightPct;	/* HEIGHT= attribute, percent (0 = unset) */
 	Boolean	has_bg;		/* BGCOLOR= given (here or on the row) */
 	Pixel	bg;		/* allocated background pixel */
+	Boolean	nowrap;		/* NOWRAP: never wrap this cell's content */
 	Boolean	header;		/* is this field created with <TH> or <TD> */
 
 	/* contents */

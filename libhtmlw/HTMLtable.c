@@ -123,6 +123,7 @@ TableField *tf;
 	tf->reqHeightPct = 0;
 	tf->has_bg = False;
 	tf->bg = (Pixel) 0;
+	tf->nowrap = False;
 
 	return(tf);
 }
@@ -1104,6 +1105,10 @@ int hasreq;
 				0, 0, &th, &tw, &tm);
 			field->maxWidth = tw;
 			field->minWidth = tm;
+			/* NOWRAP: the whole one-line width is the floor */
+			if (field->nowrap) {
+				field->minWidth = tw;
+				}
 			field->minHeight = th;
 			}
 		else {
@@ -2344,6 +2349,12 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 				field->reqHeight = rowReqHeight;
 				}
 
+			val = ParseMarkTag(m->start,MT_TABLE_DATA,"nowrap");
+			if (val != (char *) 0) {
+				field->nowrap = True;
+				free(val);
+				}
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -2411,6 +2422,12 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 			if ((field->reqHeight == 0)&&
 			    (field->reqHeightPct == 0)) {
 				field->reqHeight = rowReqHeight;
+				}
+
+			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"nowrap");
+			if (val != (char *) 0) {
+				field->nowrap = True;
+				free(val);
 				}
 
 			TableFieldSetAttributes(hw,field,m);
