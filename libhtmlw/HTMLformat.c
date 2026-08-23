@@ -310,6 +310,12 @@ static int Subscript;
 static XFontStruct *nonScriptFont;
 static int InDocHead;
 static int InUnderlined;
+/* <font COLOR=...>: the current text color nests on a stack;
+   elements pick up the Fg global at creation */
+extern int HTMLAllocColor();
+static Pixel FgStack[64];
+static int FgDepth;
+
 /* horizontal block alignment: <center> and ALIGN= on <div> and the
    headers nest (stack); ALIGN= on <p> reaches to the next block or
    </p> (ParaAlign).  0 (ALIGN_BOTTOM) means none/left. */
@@ -5755,6 +5761,33 @@ int *x, *y;
 		else
 			AlignPush(ParseBlockAlign(mark, "div"));
 		break;
+	case M_FONT:
+		if (mark->is_end)
+		{
+			if (FgDepth > 0)
+			{
+				Fg = FgStack[--FgDepth];
+			}
+		}
+		else
+		{
+			char *val;
+			Pixel np;
+
+			np = Fg;
+			val = ParseMarkTag(mark->start, "font", "COLOR");
+			if (val != NULL)
+			{
+				HTMLAllocColor((Widget)hw, val, &np);
+				free(val);
+			}
+			if (FgDepth < 64)
+			{
+				FgStack[FgDepth++] = Fg;
+			}
+			Fg = np;
+		}
+		break;
 		/*
 		 * M_SKIP contents were swallowed by the parser;
 		 * M_NOOP tags render nothing themselves.
@@ -5872,6 +5905,7 @@ FormatAll(hw, Fwidth)
 	Width = width;
 	AlignDepth = 0;
 	ParaAlign = 0;
+	FgDepth = 0;
 	TextIndent = MarginW;
 	ElementId = 0;
 	WidgetId = 0;

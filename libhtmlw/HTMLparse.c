@@ -1686,7 +1686,7 @@ static struct
 	{"bdo", M_NOOP},
 	{"wbr", M_NOOP},
 	{"nobr", M_NOOP},
-	{"font", M_NOOP},
+	{"font", M_FONT},
 	{"basefont", M_NOOP},
 	{"ruby", M_NOOP},
 	{"rt", M_NOOP},

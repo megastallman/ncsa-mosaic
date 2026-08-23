@@ -58,6 +58,8 @@ CellRun *lr;
 	lr->winfo = winfo;
 	lr->table = (struct table_rec *) table;
 	lr->linebreak = 0;
+	lr->has_fg = 0;
+	lr->fg = (Pixel) 0;
 	field->run_cnt++;
 }
 
@@ -79,6 +81,8 @@ CellRun *lr;
 		lr->winfo = (WidgetInfo *) 0;
 		lr->table = (struct table_rec *) 0;
 		lr->linebreak = 1;
+		lr->has_fg = 0;
+		lr->fg = (Pixel) 0;
 		field->run_cnt++;
 		}
 }
@@ -989,8 +993,9 @@ CellRun *run;
 			rfont = (run->font != (XFontStruct *) 0) ?
 				run->font : field->font;
 			XSetForeground(XtDisplay(hw), hw->html.drawGC,
-				(run->href != (char *) 0) ?
-				hw->html.anchor_fg : eptr->fg);
+				run->has_fg ? run->fg :
+				((run->href != (char *) 0) ?
+				 hw->html.anchor_fg : eptr->fg));
 			XSetBackground(XtDisplay(hw), hw->html.drawGC,
 				eptr->bg);
 			XSetFont(XtDisplay(hw), hw->html.drawGC,
@@ -1686,6 +1691,11 @@ int len;
 	char *cur_href = (char *) 0;	/* anchor currently open */
 	XFontStruct *fstack[8];		/* nested inline font markup */
 	int fdepth = 0;
+	Pixel colstack[8];		/* nested <font COLOR=> markup */
+	int colhas[8];
+	int coldepth = 0;
+	Pixel cur_fg = (Pixel) 0;
+	int cur_has_fg = 0;
 	XFontStruct *base_font;
 	XFontStruct *cur_font;
 
@@ -1761,6 +1771,8 @@ int len;
 					(CellRun *) 0;
 				if ((lr != (CellRun *) 0)&&
 				    (lr->font == cur_font)&&
+				    (lr->has_fg == cur_has_fg)&&
+				    ((!cur_has_fg)||(lr->fg == cur_fg))&&
 				    (((lr->href == (char *) 0)&&
 				      (cur_href == (char *) 0))||
 				     ((lr->href != (char *) 0)&&
@@ -1785,6 +1797,8 @@ int len;
 					lr->winfo = (WidgetInfo *) 0;
 					lr->table = (struct table_rec *) 0;
 					lr->linebreak = 0;
+					lr->has_fg = cur_has_fg;
+					lr->fg = cur_fg;
 					field->run_cnt++;
 					}
 				}
@@ -1825,6 +1839,13 @@ int len;
 					if (cur_href != (char *) 0) {
 						free(cur_href);
 						cur_href = (char *) 0;
+						}
+					break;
+			case M_FONT:
+					if (coldepth > 0) {
+						coldepth--;
+						cur_fg = colstack[coldepth];
+						cur_has_fg = colhas[coldepth];
 						}
 					break;
 			case M_ITALIC:
@@ -1941,6 +1962,9 @@ int len;
 							    lr->table =
 								(struct table_rec *) 0;
 							    lr->linebreak = 0;
+							    lr->has_fg =
+								cur_has_fg;
+							    lr->fg = cur_fg;
 							    field->run_cnt++;
 							    }
 							if (alt != (char *) 0) {
@@ -1977,6 +2001,30 @@ int len;
 						fstack[fdepth++] = cur_font;
 						}
 					cur_font = hw->html.fixed_font;
+					break;
+			case M_FONT:
+					if (coldepth < 8) {
+						colstack[coldepth] = cur_fg;
+						colhas[coldepth] = cur_has_fg;
+						coldepth++;
+						}
+					if (m->start != (char *) 0) {
+						char *cv;
+						Pixel np;
+
+						cv = ParseMarkTag(m->start,
+							"font", "COLOR");
+						if (cv != (char *) 0) {
+							np = cur_fg;
+							if (HTMLAllocColor(
+							    (Widget)hw, cv,
+							    &np)) {
+								cur_fg = np;
+								cur_has_fg = 1;
+								}
+							free(cv);
+							}
+						}
 					break;
 			case M_LINEBREAK:
 					TableAddBreak(field, 1);

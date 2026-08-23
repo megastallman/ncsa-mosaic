@@ -256,6 +256,8 @@ typedef struct cell_run {
 	WidgetInfo *winfo;	/* an inline form widget item */
 	struct table_rec *table; /* a nested table item */
 	int	linebreak;	/* an explicit <br>: forces a new flow line */
+	int	has_fg;		/* a <font COLOR=> was in effect */
+	Pixel	fg;		/* its allocated color */
 } CellRun;
 
 typedef struct table_field {
@@ -476,6 +478,7 @@ struct delay_rec {
 #define M_NOOP		63 /* recognized tag with no rendering effect */
 #define M_BUTTON	64 /* HTML5 <button>; becomes a fake INPUT widget */
 #define M_META		65 /* <meta>; only http-equiv=refresh is acted on */
+#define M_FONT		66 /* <font>; only COLOR= is acted on */
 
 /* syntax of Mark types */
 #define	MT_TITLE	"title"
