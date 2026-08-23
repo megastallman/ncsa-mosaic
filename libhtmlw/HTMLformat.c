@@ -5867,7 +5867,23 @@ int *x, *y;
 		break;
 	case M_TABLE:
 		if (tableSupportEnabled) {
+			int tal;
+
+			/* ALIGN=center/right positions the table via the
+			   block-alignment line shift (no float support:
+			   left/right do not wrap text around the table) */
+			tal = mark->is_end ? 0 :
+				ParseBlockAlign(mark, "table");
+			if (tal)
+			{
+				AlignPush(tal);
+			}
 			TablePlace(hw, mptr, x, y, Width);
+			if (tal)
+			{
+				ConditionalLineFeed(hw, x, y, 1);
+				AlignPop();
+			}
 		}
 		break;
 	case M_COMMENT:
