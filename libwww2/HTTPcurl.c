@@ -417,6 +417,14 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
   curl_easy_setopt (handle, CURLOPT_ERRORBUFFER, errbuf);
   curl_easy_setopt (handle, CURLOPT_NOSIGNAL, 1L);
   curl_easy_setopt (handle, CURLOPT_CONNECTTIMEOUT, 30L);
+  /* a transfer that dribbles below 64 bytes/s for a minute is stuck;
+     without this a stalled server hangs the fetch indefinitely */
+  curl_easy_setopt (handle, CURLOPT_LOW_SPEED_LIMIT, 64L);
+  curl_easy_setopt (handle, CURLOPT_LOW_SPEED_TIME, 60L);
+  /* advertise and transparently decode gzip/deflate/br; the old
+     HTMIME decompression path only reacts to the ancient x-gzip and
+     x-compress tokens, so an already-decoded body passes through */
+  curl_easy_setopt (handle, CURLOPT_ACCEPT_ENCODING, "");
   curl_easy_setopt (handle, CURLOPT_HTTP09_ALLOWED, 1L);
   curl_easy_setopt (handle, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
   curl_easy_setopt (handle, CURLOPT_HEADERFUNCTION, header_cb);
@@ -487,6 +495,12 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
       req_headers = curl_slist_append (req_headers, line);
       HTReferer = NULL;
     }
+
+  /* some content-negotiating servers behave better when told what
+     we want up front */
+  req_headers = curl_slist_append (req_headers,
+                                   "Accept: text/html, text/plain, "
+                                   "image/png, image/jpeg, image/gif, */*");
 
   /* Domain Restriction -- SWP */
   req_headers = curl_slist_append (req_headers,
@@ -674,6 +688,17 @@ PUBLIC int HTLoadHTTPCurl (char *arg, HTParentAnchor *anAnchor,
       status = HT_LOADED;
       break;
     default:
+      /* a Location header on a non-3xx status (201 Created, say) is
+         informational, not a redirect; HTMIME latched it blindly */
+      {
+        extern char *redirecting_url;
+
+        if (redirecting_url)
+          {
+            free (redirecting_url);
+            redirecting_url = NULL;
+          }
+      }
       status = HT_LOADED;
       break;
     }
