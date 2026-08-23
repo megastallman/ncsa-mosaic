@@ -115,6 +115,8 @@ TableField *tf;
 
 	tf->reqWidth = 0;
 	tf->reqPercent = 0;
+	tf->reqHeight = 0;
+	tf->reqHeightPct = 0;
 	tf->has_bg = False;
 	tf->bg = (Pixel) 0;
 
@@ -1484,6 +1486,43 @@ int hasreq;
 		}
 
 
+	/* HEIGHT= floors: a row is at least as tall as the tallest
+	   request among its cells -- pixels, or percent of the table's
+	   own height request; content taller than the request wins */
+	for (y = 0; y < t->numRows; y++) {
+		int rreq, hr;
+
+		rreq = 0;
+		for (x = 0; x < t->numColumns; x++) {
+			field = &(t->table[y * t->numColumns + x]);
+			hr = field->reqHeight;
+			if ((field->reqHeightPct > 0)&&(t->reqHeight > 0)) {
+				int pr;
+
+				pr = (t->reqHeight *
+					field->reqHeightPct) / 100;
+				if (pr > hr) {
+					hr = pr;
+					}
+				}
+			/* a rowspanning cell's request is split
+			   across its rows */
+			if ((hr > 0)&&(field->rowSpan > 1)) {
+				hr /= field->rowSpan;
+				}
+			if (hr > rreq) {
+				rreq = hr;
+				}
+			}
+		if ((rreq > 0)&&
+		    (t->table[y * t->numColumns].rowHeight < rreq)) {
+			for (x = 0; x < t->numColumns; x++) {
+				t->table[y * t->numColumns + x].rowHeight =
+					rreq;
+				}
+			}
+		}
+
 	/* calculate table width */
 	t->width = 0;
 	for (x = 0; x < t->numColumns; x++) {
@@ -1511,6 +1550,27 @@ int hasreq;
 		((t->numColumns + 1) * t->cellspacing);
 	t->height += (t->borders*2) +
 		((t->numRows + 1) * t->cellspacing);
+
+	/* stretch to the table's own HEIGHT= request: the extra is
+	   split evenly among the rows (VALIGN then places each cell's
+	   content within its taller row) */
+	if ((t->reqHeight > t->height)&&(t->numRows > 0)) {
+		int extra, per, add;
+
+		extra = t->reqHeight - t->height;
+		per = extra / t->numRows;
+		for (y = 0; y < t->numRows; y++) {
+			add = per;
+			if (y == (t->numRows - 1)) {
+				add += extra - per * t->numRows;
+				}
+			for (x = 0; x < t->numColumns; x++) {
+				t->table[y * t->numColumns + x].rowHeight +=
+					add;
+				}
+			}
+		t->height = t->reqHeight;
+		}
 
 	/* leave room to draw the caption */
 	t->captionHeight = 0;
@@ -1941,6 +2001,7 @@ char *tptr;
 Pixel rowBg;			/* BGCOLOR from the current <tr> */
 int rowHasBg;
 int rowValign;			/* VALIGN from the current <tr> */
+int rowReqHeight;		/* HEIGHT from the current <tr> */
 
 	if (((*mptr)->type != M_TABLE) || ((*mptr)->is_end)) {
 		return(0);
@@ -1962,6 +2023,15 @@ int rowValign;			/* VALIGN from the current <tr> */
 		}
 	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"WIDTH");
 	TableParseWidth(tptr, &t->reqWidth, &t->reqPercent);
+	{
+		int hpx, hpct;
+
+		/* table HEIGHT: pixels only (percent would be of the
+		   viewport; nobody sane wants that honored) */
+		tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"HEIGHT");
+		TableParseWidth(tptr, &hpx, &hpct);
+		t->reqHeight = hpx;
+	}
 	t->has_bg = False;
 	t->bg = (Pixel) 0;
 	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"BGCOLOR");
@@ -2000,6 +2070,7 @@ int rowValign;			/* VALIGN from the current <tr> */
 	rowBg = (Pixel) 0;
 	rowHasBg = 0;
 	rowValign = ALIGN_MIDDLE;
+	rowReqHeight = 0;
 	m = *mptr;
 	field = (TableField *) 0;
 	while (m && (!((m->type == M_TABLE) && (m->is_end)))) {
@@ -2091,6 +2162,15 @@ int rowValign;			/* VALIGN from the current <tr> */
 			/* likewise the row's VALIGN */
 			val = ParseMarkTag(m->start,MT_TABLE_ROW,"valign");
 			rowValign = TableParseValign(val, ALIGN_MIDDLE);
+			/* and the row's HEIGHT (pixels) */
+			{
+				int hpx, hpct;
+
+				val = ParseMarkTag(m->start,MT_TABLE_ROW,
+					"height");
+				TableParseWidth(val, &hpx, &hpct);
+				rowReqHeight = hpx;
+			}
 
 			/* expand at end of row */
 			while(TableExpandFields(tableList, rowList,
@@ -2168,6 +2248,14 @@ int rowValign;			/* VALIGN from the current <tr> */
 			val = ParseMarkTag(m->start,MT_TABLE_DATA,"valign");
 			field->valign = TableParseValign(val, rowValign);
 
+			val = ParseMarkTag(m->start,MT_TABLE_DATA,"height");
+			TableParseWidth(val, &field->reqHeight,
+				&field->reqHeightPct);
+			if ((field->reqHeight == 0)&&
+			    (field->reqHeightPct == 0)) {
+				field->reqHeight = rowReqHeight;
+				}
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -2228,6 +2316,14 @@ int rowValign;			/* VALIGN from the current <tr> */
 
 			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"valign");
 			field->valign = TableParseValign(val, rowValign);
+
+			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"height");
+			TableParseWidth(val, &field->reqHeight,
+				&field->reqHeightPct);
+			if ((field->reqHeight == 0)&&
+			    (field->reqHeightPct == 0)) {
+				field->reqHeight = rowReqHeight;
+				}
 
 			TableFieldSetAttributes(hw,field,m);
 

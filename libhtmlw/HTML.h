@@ -273,6 +273,8 @@ typedef struct table_field {
         int rowHeight;          /* uniform hieght for all element in the row*/
 	int reqWidth;		/* WIDTH= attribute, pixels (0 = unset) */
 	int reqPercent;		/* WIDTH= attribute, percent (0 = unset) */
+	int reqHeight;		/* HEIGHT= attribute, pixels (0 = unset) */
+	int reqHeightPct;	/* HEIGHT= attribute, percent (0 = unset) */
 	Boolean	has_bg;		/* BGCOLOR= given (here or on the row) */
 	Pixel	bg;		/* allocated background pixel */
 	Boolean	header;		/* is this field created with <TH> or <TD> */
@@ -304,6 +306,7 @@ typedef struct table_rec {
 	int	numRows;
 	int	reqWidth;	/* WIDTH= attribute, pixels (0 = unset) */
 	int	reqPercent;	/* WIDTH= attribute, percent (0 = unset) */
+	int	reqHeight;	/* HEIGHT= attribute, pixels (0 = unset) */
 	Boolean	has_bg;		/* BGCOLOR= given on the table */
 	Pixel	bg;		/* allocated background pixel */
 	int	cellspacing;	/* gap between cells and around the grid */
