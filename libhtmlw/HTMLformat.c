@@ -2200,14 +2200,113 @@ BulletPlace(hw, x, y)
  * Create and add the element record for it.
  */
 void
-HRulePlace(hw, x, y, width)
+HRulePlace(hw, mptr, x, y, width)
 	HTMLWidget hw;
+	struct mark_up *mptr;	/* NULL for a decorative rule */
 	int *x, *y;
 	unsigned int width;
 {
+	int usable, rw, thick, noshade, al, rx;
+	char *val;
+
+	usable = (int)width - (int)(2 * hw->html.margin_width);
+	if (usable < 1)
+	{
+		usable = 1;
+	}
+	rw = usable;
+	thick = 2;
+	noshade = 0;
+	al = ALIGN_CENTER;	/* HTML: rules center by default */
+	if ((mptr != NULL)&&(mptr->start != NULL))
+	{
+		val = ParseMarkTag(mptr->start, MT_HRULE, "WIDTH");
+		if (val != NULL)
+		{
+			int n = atoi(val);
+
+			if (n > 0)
+			{
+				if (strchr(val, '%') != NULL)
+				{
+					if (n > 100)
+					{
+						n = 100;
+					}
+					rw = (usable * n) / 100;
+				}
+				else
+				{
+					rw = n;
+				}
+				if (rw > usable)
+				{
+					rw = usable;
+				}
+				if (rw < 1)
+				{
+					rw = 1;
+				}
+			}
+			free(val);
+		}
+		val = ParseMarkTag(mptr->start, MT_HRULE, "SIZE");
+		if (val != NULL)
+		{
+			thick = atoi(val);
+			if (thick < 1)
+			{
+				thick = 1;
+			}
+			if (thick > 100)
+			{
+				thick = 100;
+			}
+			free(val);
+		}
+		val = ParseMarkTag(mptr->start, MT_HRULE, "NOSHADE");
+		if (val != NULL)
+		{
+			noshade = 1;
+			free(val);
+		}
+		val = ParseMarkTag(mptr->start, MT_HRULE, "ALIGN");
+		if (val != NULL)
+		{
+			if (caseless_equal(val, "left"))
+			{
+				al = ALIGN_LEFT;
+			}
+			else if (caseless_equal(val, "right"))
+			{
+				al = ALIGN_RIGHT;
+			}
+			free(val);
+		}
+	}
+	rx = hw->html.margin_width;
+	if (al == ALIGN_CENTER)
+	{
+		rx = rx + (usable - rw) / 2;
+	}
+	else if (al == ALIGN_RIGHT)
+	{
+		rx = rx + usable - rw;
+	}
+
 	NeedSpace = 0;
 	*x = hw->html.margin_width;
-	SetElement(hw, E_HRULE, currentFont, *x, *y, (char *)NULL, NULL, NULL, IMAGE_DEFAULT_BORDER);
+	SetElement(hw, E_HRULE, currentFont, rx, *y, (char *)NULL, NULL, NULL, IMAGE_DEFAULT_BORDER);
+	/* the rule remembers its geometry: width here, thickness in
+	   bwidth, NOSHADE in the (otherwise unused) strikeout flag */
+	Current->width = rw;
+	Current->bwidth = thick;
+	Current->strikeout = noshade;
+	if ((thick + 4) > LineBottom)
+	{
+		/* a thick rule needs the room below the baseline */
+		LineBottom = thick + 4;
+	}
 	*x = *x + width - (2 * hw->html.margin_width);
 	NeedSpace = 1;
 	PF_LF_State = 0;
@@ -5577,7 +5676,7 @@ int *x, *y;
 			 * Horizontal rule
 			 */
 			ConditionalLineFeed(hw, x, y, 1);
-			HRulePlace(hw, x, y, Width);
+			HRulePlace(hw, (struct mark_up *)NULL, x, y, Width);
 			ConditionalLineFeed(hw, x, y, 1);
 
 			/*
@@ -5628,7 +5727,7 @@ int *x, *y;
 			 * Horizontal rule
 			 */
 			ConditionalLineFeed(hw, x, y, 1);
-			HRulePlace(hw, x, y, Width);
+			HRulePlace(hw, (struct mark_up *)NULL, x, y, Width);
 			ConditionalLineFeed(hw, x, y, 1);
 
 			/*
@@ -5643,7 +5742,7 @@ int *x, *y;
 		break;
 	case M_HRULE:
 		ConditionalLineFeed(hw, x, y, 1);
-		HRulePlace(hw, x, y, Width);
+		HRulePlace(hw, mark, x, y, Width);
 		ConditionalLineFeed(hw, x, y, 1);
 		break;
 	case M_LINEBREAK:
@@ -6660,6 +6759,9 @@ HRuleRefresh(hw, eptr)
 	int width, height;
 	int x1, y1;
 
+	int thick;
+	int ex;
+
 	width = (int)hw->html.view_width - (int)(2 * hw->html.margin_width);
 	if (width < 0)
 	{
@@ -6672,22 +6774,50 @@ HRuleRefresh(hw, eptr)
 	y1 = y1 - hw->html.scroll_y;
 	height = eptr->line_height;
 
-	/* blank out area */
+	/* blank out the whole band, not just from the rule's own x
+	   (an aligned or narrow rule starts anywhere in it) */
+	ex = (int)hw->html.margin_width - hw->html.scroll_x;
 	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->bg);
 	if(!hw->html.bg_image)
 	  XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
-			 hw->html.drawGC, x1, y1, width, height);
+			 hw->html.drawGC, ex, y1, width, height);
+
+	/* geometry stored at placement: WIDTH= in width, SIZE= in
+	   bwidth, NOSHADE in strikeout */
+	if (eptr->width > 0)
+	{
+		width = eptr->width;
+	}
+	thick = (eptr->bwidth > 0) ? eptr->bwidth : 2;
 	y1 = y1 + (height / 2) - 1;
 
 	XSetLineAttributes(XtDisplay(hw), hw->html.drawGC, 1,
 		LineSolid, CapButt, JoinBevel);
+	if (eptr->strikeout)
+	{
+		/* NOSHADE: one solid bar */
+		XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
+		XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
+			hw->html.drawGC, x1, y1, width, thick);
+		return;
+	}
 #ifdef MOTIF
 	XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
 		hw->manager.bottom_shadow_GC,
 		x1, y1, (int)(x1 + width), y1);
 	XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
 		hw->manager.top_shadow_GC,
-		x1, y1 + 1, (int)(x1 + width), y1 + 1);
+		x1, y1 + thick - 1, (int)(x1 + width), y1 + thick - 1);
+	if (thick > 2)
+	{
+		XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
+			hw->manager.bottom_shadow_GC,
+			x1, y1, x1, y1 + thick - 1);
+		XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
+			hw->manager.top_shadow_GC,
+			(int)(x1 + width), y1,
+			(int)(x1 + width), y1 + thick - 1);
+	}
 #else
 	/* changing the GC back and forth is not the most efficient way.... */
 	XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
@@ -6696,7 +6826,7 @@ HRuleRefresh(hw, eptr)
 		x1, y1, (int)(x1 + width), y1);
 	XDrawLine(XtDisplay(hw), XtWindow(hw->html.view),
 		hw->html.drawGC,
-		x1, y1 + 1, (int)(x1 + width), y1 + 1);
+		x1, y1 + thick - 1, (int)(x1 + width), y1 + thick - 1);
 #endif
 }
 
