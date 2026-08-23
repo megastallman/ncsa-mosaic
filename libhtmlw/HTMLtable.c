@@ -462,6 +462,36 @@ register int width;
 }
 
 /*
+ * The narrowest a table can be poured to: every column squeezed to
+ * its longest-word floor.  This is what a nested table contributes
+ * as its minimum in the enclosing cell -- its CURRENT width is just
+ * how it happened to be poured (at full page width at build time)
+ * and would inflate the parent's floors until the page overflows.
+ */
+static int TableMinContentWidth(t)
+TableInfo *t;
+{
+int x, y, colmin, w;
+
+	if (t == (TableInfo *) 0) {
+		return(0);
+		}
+	w = 2 * t->borders;
+	for (x = 0; x < t->numColumns; x++) {
+		colmin = 0;
+		for (y = 0; y < t->numRows; y++) {
+			if (t->table[y * t->numColumns + x].minWidth >
+			    colmin) {
+				colmin = t->table[y * t->numColumns +
+					x].minWidth;
+				}
+			}
+		w += colmin + 2 * FIELD_BORDER_SPACE;
+		}
+	return(w);
+}
+
+/*
  * Flow a text cell's runs into `width` pixels, greedy word-wrapped.
  * One deterministic layout serves three callers, so what is measured
  * is exactly what is drawn and exactly what is hit-tested:
@@ -621,9 +651,23 @@ CellRun *run;
 		if (cx > maxlinew) {
 			maxlinew = cx;
 			}
-		if ((retminword != (int *) 0)&&
-		    (words[i].width > *retminword)) {
-			*retminword = words[i].width;
+		if (retminword != (int *) 0) {
+			int mw;
+
+			/* a table item can be poured narrower than it
+			   currently is, down to its min-content width;
+			   text words and other items are unsplittable */
+			mw = words[i].width;
+			if (run->table != (struct table_rec *) 0) {
+				mw = TableMinContentWidth(
+					(TableInfo *)run->table);
+				if (mw > words[i].width) {
+					mw = words[i].width;
+					}
+				}
+			if (mw > *retminword) {
+				*retminword = mw;
+				}
 			}
 		}
 	nlines = line + 1;
@@ -1022,10 +1066,15 @@ int accumulateColWidth;
 				field->colWidth = (int) (percentToShrink *
 				     ((float) CalculateMaxWidthOfColumn(t,x)));
 				/* never squeeze below the longest word
-				   (or a nested table); overflowing the
-				   page beats unreadable sliver columns */
-				if (field->colWidth < field->minWidth) {
-					field->colWidth = field->minWidth;
+				   (or a nested table's min-content) PLUS
+				   the padding the draw indents by, or
+				   the word bleeds into the next cell;
+				   overflowing the page beats unreadable
+				   sliver columns */
+				if (field->colWidth < (field->minWidth +
+						2 * FIELD_BORDER_SPACE)) {
+					field->colWidth = field->minWidth +
+						2 * FIELD_BORDER_SPACE;
 					}
 				field->rowHeight = 0;
 				}
@@ -1062,6 +1111,44 @@ int accumulateColWidth;
 			t->table[y*t->numColumns+x].colWidth = maxWidthOfColumn;
 			}
 		    }
+
+		/* column widths are final: pour any nested table that is
+		   wider than the cell it sits in again, at the cell's
+		   real width (every table is first built at full page
+		   width; the cell's minWidth only promised the nested
+		   table's min-content width).  Recursion through this
+		   same function re-pours deeper tables in turn. */
+		for (x = 0; x < t->numColumns; x++) {
+			for (y = 0; y < t->numRows; y++) {
+				int avail, r;
+
+				field = &(t->table[y*t->numColumns+x]);
+				if ((field->type != F_TEXT)||
+				    (field->run_cnt <= 0)) {
+					continue;
+					}
+				numAdjacent = TableHowManyConnectedHorizFields
+									(t,x,y);
+				avail = field->colWidth;
+				for (xx = x+1; xx < x+numAdjacent+1; xx++) {
+				    avail += t->table[y*t->numColumns+xx].colWidth;
+				    }
+				avail -= 2 * FIELD_BORDER_SPACE;
+				if (avail <= 0) {
+					continue;
+					}
+				for (r = 0; r < field->run_cnt; r++) {
+					TableInfo *nt;
+
+					nt = (TableInfo *)field->runs[r].table;
+					if ((nt != (TableInfo *) 0)&&
+					    (nt->width > avail)) {
+						TableCalculateDimensions(hw,
+							nt, avail);
+						}
+					}
+				}
+			}
 
 		/* now flow every cell at the exact width the draw will
 		   use (the span's colWidths minus the border padding)

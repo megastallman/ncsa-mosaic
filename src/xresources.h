@@ -87,11 +87,13 @@ static XtResource resources[] = {
     offset (display_urls_not_titles), XtRString, "False" },
   /* Default width for a Document View window.  This will change as windows
      are cloned. */
+  /* Modern pages (opennet.me's header among them) assume at least
+     ~800 pixels of content width before their tables must overflow. */
   { "defaultWidth", "DefaultWidth", XtRInt, sizeof (int),
-      offset (default_width), XtRString, "640" },
+      offset (default_width), XtRString, "840" },
   /* Default height for a Document View window. */
   { "defaultHeight", "DefaultHeight", XtRInt, sizeof (int),
-      offset (default_height), XtRString, "700" },
+      offset (default_height), XtRString, "760" },
   /* Startup document. */
   { "homeDocument", "HomeDocument", XtRString, sizeof (char *),
       offset (home_document), XtRString,
