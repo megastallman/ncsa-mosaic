@@ -515,7 +515,7 @@ int x, y, colmin, w;
 	if (t == (TableInfo *) 0) {
 		return(0);
 		}
-	w = 2 * t->borders;
+	w = 2 * t->borders + t->cellspacing;
 	for (x = 0; x < t->numColumns; x++) {
 		colmin = 0;
 		for (y = 0; y < t->numRows; y++) {
@@ -525,7 +525,7 @@ int x, y, colmin, w;
 					x].minWidth;
 				}
 			}
-		w += colmin + 2 * FIELD_BORDER_SPACE;
+		w += colmin + 2 * t->cellpadding + t->cellspacing;
 		}
 	return(w);
 }
@@ -1035,9 +1035,11 @@ int hasreq;
 	    }
 
 
-	/* add border spacing to widths */
-	sumMaxWidth += (t->numColumns * 2 * FIELD_BORDER_SPACE);
-	sumMinWidth += (t->numColumns * 2 * FIELD_BORDER_SPACE);
+	/* add padding and inter-cell spacing to widths */
+	sumMaxWidth += (t->numColumns * 2 * t->cellpadding) +
+		((t->numColumns + 1) * t->cellspacing);
+	sumMinWidth += (t->numColumns * 2 * t->cellpadding) +
+		((t->numColumns + 1) * t->cellspacing);
 
 
 	/* divy up max width with adjacent continue Horizontal fields.
@@ -1100,7 +1102,7 @@ int hasreq;
 			for (y = 0; y < t->numRows; y++) {
 			        t->table[y*t->numColumns + x].colWidth
 						= maxWidthOfColumn
-						+ 2 * FIELD_BORDER_SPACE;
+						+ 2 * t->cellpadding;
 				}
 			}
 		for (y=0; y < t->numRows; y++) {
@@ -1117,7 +1119,7 @@ int hasreq;
 			for (x=0; x < t->numColumns; x++) {
 				t->table[y * t->numColumns + x].rowHeight
 						= maxHeightOfRow
-						+ 2 * FIELD_BORDER_SPACE;
+						+ 2 * t->cellpadding;
 				}
 			}
 
@@ -1157,13 +1159,13 @@ int hasreq;
 			cw = (int *)malloc(t->numColumns * sizeof(int));
 			for (x = 0; x < t->numColumns; x++) {
 				cmax[x] = CalculateMaxWidthOfColumn(t,x) +
-					2 * FIELD_BORDER_SPACE;
-				cmin[x] = 2 * FIELD_BORDER_SPACE;
+					2 * t->cellpadding;
+				cmin[x] = 2 * t->cellpadding;
 				creq = 0;
 				for (y = 0; y < t->numRows; y++) {
 					field = &(t->table[y*t->numColumns+x]);
 					w = field->minWidth
-						+ 2 * FIELD_BORDER_SPACE;
+						+ 2 * t->cellpadding;
 					if (w > cmin[x]) {
 						cmin[x] = w;
 						}
@@ -1194,7 +1196,11 @@ int hasreq;
 					}
 				cw[x] = cmin[x];
 				}
-			surplus = pageWidth;
+			/* the spacing between cells and the outer border
+			   come out of the page before the cells share it */
+			surplus = pageWidth -
+				((t->numColumns + 1) * t->cellspacing) -
+				(2 * t->borders);
 			for (x = 0; x < t->numColumns; x++) {
 				surplus -= cmin[x];
 				}
@@ -1299,9 +1305,10 @@ int hasreq;
 									(t,x,y);
 				avail = field->colWidth;
 				for (xx = x+1; xx < x+numAdjacent+1; xx++) {
-				    avail += t->table[y*t->numColumns+xx].colWidth;
+				    avail += t->table[y*t->numColumns+xx].colWidth
+					+ t->cellspacing;
 				    }
-				avail -= 2 * FIELD_BORDER_SPACE;
+				avail -= 2 * t->cellpadding;
 				if (avail <= 0) {
 					continue;
 					}
@@ -1329,7 +1336,8 @@ int hasreq;
 				accumulateColWidth = field->colWidth;
 				for (xx = x+1; xx < x+numAdjacent+1; xx++) {
 				    accumulateColWidth +=
-					t->table[y*t->numColumns+xx].colWidth;
+					t->table[y*t->numColumns+xx].colWidth
+					+ t->cellspacing;
 				    }
 
 				if (field->type == F_TEXT) {
@@ -1339,12 +1347,12 @@ int hasreq;
 						(struct ele_rec *) 0,
 						field, 0, 0,
 						accumulateColWidth -
-							2 * FIELD_BORDER_SPACE,
+							2 * t->cellpadding,
 						0, CELLFLOW_MEASURE,
 						0, 0, &th,
 						(int *) 0, (int *) 0);
 					field->rowHeight = th +
-						2 * FIELD_BORDER_SPACE;
+						2 * t->cellpadding;
 					}
 
 #ifndef DISABLE_TRACE
@@ -1418,8 +1426,10 @@ int hasreq;
 	/* (these used to sit inside the DISABLE_TRACE conditional,
 	   which would have dropped the border padding -- and the
 	   caption room -- from no-trace builds) */
-	t->width+=(t->borders*2);
-	t->height+=(t->borders*2);
+	t->width += (t->borders*2) +
+		((t->numColumns + 1) * t->cellspacing);
+	t->height += (t->borders*2) +
+		((t->numRows + 1) * t->cellspacing);
 
 	/* leave room to draw the caption */
 	t->captionHeight = 0;
@@ -1867,6 +1877,28 @@ int rowHasBg;
 			t->has_bg = True;
 			}
 		}
+	/* defaults close to the classic hardcoded look (an inset of 5
+	   per cell): pad 2 + space 2 */
+	t->cellspacing = 2;
+	t->cellpadding = 2;
+	if (tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"CELLSPACING")) {
+		t->cellspacing = atoi(tptr);
+		if (t->cellspacing < 0) {
+			t->cellspacing = 0;
+			}
+		if (t->cellspacing > 50) {
+			t->cellspacing = 50;
+			}
+		}
+	if (tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"CELLPADDING")) {
+		t->cellpadding = atoi(tptr);
+		if (t->cellpadding < 0) {
+			t->cellpadding = 0;
+			}
+		if (t->cellpadding > 50) {
+			t->cellpadding = 50;
+			}
+		}
 	tableList = ListCreate();
 	rowList = ListCreate();
 	ListAddEntry(tableList, rowList);
@@ -2170,12 +2202,13 @@ int rowHasBg;
 
 
 
-TableDisplayField(hw,eptr,field,x,y,width,height)
+TableDisplayField(hw,eptr,field,x,y,width,height,pad)
 HTMLWidget hw;
 struct ele_rec *eptr;
 TableField *field;
 int x,y; /* field origin */
 int width,height; /* space allowed for displaying */
+int pad; /* the table's cellpadding */
 {
 int stringWidth; /* in pixels */
 int placeX,placeY;
@@ -2191,11 +2224,11 @@ int yy;
 		return -1;
 		}
 
-	/* adjust for aesthetic surounding space */
-	width -= (2 * FIELD_BORDER_SPACE);
-	x += FIELD_BORDER_SPACE;
-	height -= (2 * FIELD_BORDER_SPACE);
-	y += FIELD_BORDER_SPACE;
+	/* adjust for the cell padding */
+	width -= (2 * pad);
+	x += pad;
+	height -= (2 * pad);
+	y += pad;
 
 	XSetLineAttributes(XtDisplay(hw),hw->html.drawGC,1,LineSolid,
 		CapNotLast,JoinMiter);
@@ -2236,13 +2269,14 @@ int x,y;
 	*expandWidth = t->table[y * t->numColumns + x].colWidth;
 	*expandHeight = t->table[y * t->numColumns + x].rowHeight;
 
-	/* do width */
+	/* do width; a span swallows the spacing between its cells */
 	x++;
 	if (x < t->numColumns) {
 		/* do width */
 		while ((x < t->numColumns) &&
 				t->table[y * t->numColumns + x].contHoriz) {
-			(*expandWidth) += t->table[y * t->numColumns + x].colWidth;
+			(*expandWidth) += t->table[y * t->numColumns + x].colWidth
+				+ t->cellspacing;
 			x++;
 			}
 		}
@@ -2253,7 +2287,8 @@ int x,y;
 		/* do height */
 		while ((y < t->numRows) &&
 				t->table[y * t->numColumns + x].contVert) {
-			(*expandHeight) += t->table[y * t->numColumns+x].rowHeight;
+			(*expandHeight) += t->table[y * t->numColumns+x].rowHeight
+				+ t->cellspacing;
 			y++;
 			}
 		}
@@ -2339,9 +2374,9 @@ int expandedWidth,expandedHeight;
 		}
 
 	field = t->table;
-	horizMarker = y+t->borders;
+	horizMarker = y + t->borders + t->cellspacing;
 	for (yy = 0; yy < t->numRows; yy++) {
-		vertMarker = x+(t->borders/2);
+		vertMarker = x + t->borders + t->cellspacing;
 		rowHeight = field->rowHeight;
 		for (xx = 0; xx < t->numColumns; xx++) {
 			colWidth = field->colWidth;
@@ -2365,23 +2400,21 @@ int expandedWidth,expandedHeight;
 					hw->html.drawGC, eptr->fg);
 				}
 
-			/* draw field borders */
-			if (t->borders){
-			    if (!field->contVert) { /* draw above line */
-				XDrawLine(XtDisplay(hw),
+			/* draw field borders: with spacing the cells are
+			   separated, so each anchor cell gets its own
+			   rectangle (at zero spacing it coincides with
+			   the classic shared grid lines) */
+			if ((t->borders)&&
+			    (!field->contVert)&&(!field->contHoriz)) {
+				TableGetExpandedDimensions(t, xx, yy,
+					&expandedWidth, &expandedHeight);
+				XDrawRectangle(XtDisplay(hw),
 					XtWindow(hw->html.view),
-                        		hw->html.drawGC,
+					hw->html.drawGC,
 					vertMarker, horizMarker,
-					vertMarker + colWidth, horizMarker);
+					(unsigned int)expandedWidth,
+					(unsigned int)expandedHeight);
 				}
-			    if (!field->contHoriz) { /* draw left side*/
-				XDrawLine(XtDisplay(hw),
-					XtWindow(hw->html.view),
-                        		hw->html.drawGC,
-					vertMarker, horizMarker,
-					vertMarker, horizMarker + rowHeight);
-				}
-			    }
 			TableGetExpandedDimensions(t,
 					xx,yy,&expandedWidth,&expandedHeight);
 			/* fill in field */
@@ -2391,7 +2424,8 @@ int expandedWidth,expandedHeight;
 					  vertMarker,
 					  horizMarker,
 					  expandedWidth,
-					  expandedHeight);
+					  expandedHeight,
+					  t->cellpadding);
 
 			/* a nested TableDraw (a table item in a cell's
 			   flow) may have changed the line width; restore
@@ -2409,11 +2443,19 @@ int expandedWidth,expandedHeight;
 						hw->html.drawGC, eptr->bg);
 				}
 
-			vertMarker += colWidth;
+			vertMarker += colWidth + t->cellspacing;
 			field++;
 			}
 
-		horizMarker += rowHeight;
+		horizMarker += rowHeight + t->cellspacing;
+		}
+
+	/* the table's outer frame */
+	if (t->borders) {
+		XDrawRectangle(XtDisplay(hw), XtWindow(hw->html.view),
+			hw->html.drawGC, x, y,
+			(unsigned int)t->width,
+			(unsigned int)(t->height - t->captionHeight));
 		}
 
 	XSetLineAttributes(XtDisplay(hw),
@@ -2466,9 +2508,9 @@ int expandedWidth,expandedHeight;
 		}
 
 	field = t->table;
-	horizMarker = y+t->borders;
+	horizMarker = y + t->borders + t->cellspacing;
 	for (yy = 0; yy < t->numRows; yy++) {
-		vertMarker = x+(t->borders/2);
+		vertMarker = x + t->borders + t->cellspacing;
 		rowHeight = field->rowHeight;
 		for (xx = 0; xx < t->numColumns; xx++) {
 			colWidth = field->colWidth;
@@ -2490,22 +2532,22 @@ int expandedWidth,expandedHeight;
 						(struct ele_rec *) 0,
 						field,
 						vertMarker +
-							FIELD_BORDER_SPACE,
+							t->cellpadding,
 						horizMarker +
-							FIELD_BORDER_SPACE,
+							t->cellpadding,
 						expandedWidth -
-							2*FIELD_BORDER_SPACE,
+							2*t->cellpadding,
 						expandedHeight -
-							2*FIELD_BORDER_SPACE,
+							2*t->cellpadding,
 						CELLFLOW_HIT, ex, ey, &th,
 						(int *) 0, (int *) 0));
 					}
 				return(field->href);
 				}
-			vertMarker += colWidth;
+			vertMarker += colWidth + t->cellspacing;
 			field++;
 			}
-		horizMarker += rowHeight;
+		horizMarker += rowHeight + t->cellspacing;
 		}
 	return((char *) 0);
 }

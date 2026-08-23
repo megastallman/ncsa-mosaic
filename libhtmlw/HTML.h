@@ -304,6 +304,8 @@ typedef struct table_rec {
 	int	reqPercent;	/* WIDTH= attribute, percent (0 = unset) */
 	Boolean	has_bg;		/* BGCOLOR= given on the table */
 	Pixel	bg;		/* allocated background pixel */
+	int	cellspacing;	/* gap between cells and around the grid */
+	int	cellpadding;	/* inset between a cell's edge and content */
 	TableField *table;
 } TableInfo;
 
