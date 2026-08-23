@@ -819,6 +819,65 @@ XGCValues values;
 }
 
 
+/* parse an HTML color -- a name or #rrggbb -- and allocate it in the
+   widget's colormap; returns 1 with *pix set, 0 on any failure.
+   Used by the table code for BGCOLOR attributes. */
+int HTMLAllocColor(Widget w, char *cname, Pixel *pix)
+{
+    int r,g,b;
+    XColor ecol,col;
+    Colormap cmap;
+    char t[3];
+    char *val;
+    int i;
+
+    if (!cname || !*cname || !pix) {
+        return 0;
+    }
+
+    cmap = w->core.colormap;
+
+    val = cname;
+    if (*val != '#') {
+        if (XAllocNamedColor(XtDisplay(w),cmap,cname,&col,&ecol)) {
+            *pix = col.pixel;
+            return 1;
+        }
+        return 0;
+    }
+
+    val++;
+    if (strlen(val) < 6) {
+        return 0;
+    }
+    for (i=0; i<6; i++) {
+        if (!strchr("0123456789AaBbCcDdEeFf",val[i])) {
+            return 0;
+        }
+    }
+    t[2]=0;
+    t[0]=val[0];
+    t[1]=val[1];
+    sscanf(t,"%x",&r);
+    t[0]=val[2];
+    t[1]=val[3];
+    sscanf(t,"%x",&g);
+    t[0]=val[4];
+    t[1]=val[5];
+    sscanf(t,"%x",&b);
+
+    col.red = ((unsigned) r) << 8;
+    col.green = ((unsigned) g) << 8;
+    col.blue = ((unsigned) b) << 8;
+    col.flags = DoRed | DoGreen | DoBlue;
+
+    if (!XAllocColor(XtDisplay(w),cmap,&col)) {
+        return 0;
+    }
+    *pix = col.pixel;
+    return 1;
+}
+
 hw_do_color(Widget w, char *att, char *cname)
 {
     int r,g,b;

@@ -91,9 +91,13 @@ TableField *tf;
 
 	tf->reqWidth = 0;
 	tf->reqPercent = 0;
+	tf->has_bg = False;
+	tf->bg = (Pixel) 0;
 
 	return(tf);
 }
+
+extern int HTMLAllocColor();
 
 
 /* parse a WIDTH= attribute value: "50%" style into *pct, plain
@@ -1036,16 +1040,22 @@ int hasreq;
 	sumMinWidth += (t->numColumns * 2 * FIELD_BORDER_SPACE);
 
 
-	/* divy up max width with adjacent continue Horizontal fields*/
+	/* divy up max width with adjacent continue Horizontal fields.
+	   Compute the share first: the loop writes the anchor before
+	   the continuations, and it must cover ALL span columns --
+	   stopping one short left the last column with no share and
+	   lost that slice of the span's width entirely */
 	for (y = 0; y < t->numRows; y++) {
 		    for (x = 0; x < t->numColumns; x++) {
 			numAdjacent = TableHowManyConnectedHorizFields(t,x,y);
 			if (numAdjacent) {
-			    int xx;
-			    for (xx = x; xx < x + numAdjacent; xx++) {
-				t->table[y * t->numColumns+xx].maxWidth
-					= t->table[y*t->numColumns+x].maxWidth
+			    int xx, share;
+
+			    share = t->table[y*t->numColumns+x].maxWidth
 						/ (numAdjacent+ 1);
+			    for (xx = x; xx < x + numAdjacent + 1; xx++) {
+				t->table[y * t->numColumns+xx].maxWidth
+					= share;
 				}
 			    }
 			x += numAdjacent;
@@ -1056,11 +1066,13 @@ int hasreq;
 		    for (y = 0; y < t->numRows; y++) {
 			numAdjacent = TableHowManyConnectedVertFields(t,x,y);
 			if (numAdjacent) {
-			    int yy;
-			    for (yy = y; yy < y + numAdjacent; yy++) {
-				t->table[yy * t->numColumns+x].minHeight
-					= t->table[y*t->numColumns+x].minHeight
+			    int yy, share;
+
+			    share = t->table[y*t->numColumns+x].minHeight
 						/ (numAdjacent + 1);
+			    for (yy = y; yy < y + numAdjacent + 1; yy++) {
+				t->table[yy * t->numColumns+x].minHeight
+					= share;
 				}
 			    }
 			y += numAdjacent;
@@ -1233,16 +1245,19 @@ int hasreq;
 			free((char *)cw);
 		}
 
-		/* divy up width with adjacent continue Horizontal fields*/
+		/* divy up width with adjacent continue Horizontal fields
+		   (share computed first, all span columns covered) */
 		for (y = 0; y < t->numRows; y++) {
 		    for (x = 0; x < t->numColumns; x++) {
 			numAdjacent = TableHowManyConnectedHorizFields(t,x,y);
 			if (numAdjacent) {
-			    int xx;
-			    for (xx = x; xx < x + numAdjacent; xx++) {
-				t->table[y * t->numColumns+xx].colWidth
-					= t->table[y*t->numColumns+x].colWidth
+			    int xx, share;
+
+			    share = t->table[y*t->numColumns+x].colWidth
 						/ (numAdjacent+ 1);
+			    for (xx = x; xx < x + numAdjacent + 1; xx++) {
+				t->table[y * t->numColumns+xx].colWidth
+					= share;
 				}
 			    }
 			x += numAdjacent;
@@ -1342,16 +1357,19 @@ int hasreq;
 				}
 			}
 
-		/* divy up height with adjacent continue Vertical fields */
+		/* divy up height with adjacent continue Vertical fields
+		   (share computed first, all span rows covered) */
 		for (x = 0; x < t->numColumns; x++) {
 		    for (y = 0; y < t->numRows; y++) {
 			numAdjacent = TableHowManyConnectedVertFields(t,x,y);
 			if (numAdjacent) {
-			    int yy;
-			    for (yy = y; yy < y + numAdjacent; yy++) {
-				t->table[yy * t->numColumns+x].rowHeight
-					= t->table[y*t->numColumns+x].rowHeight
+			    int yy, share;
+
+			    share = t->table[y*t->numColumns+x].rowHeight
 						/ (numAdjacent + 1);
+			    for (yy = y; yy < y + numAdjacent + 1; yy++) {
+				t->table[yy * t->numColumns+x].rowHeight
+					= share;
 				}
 			    }
 			y += numAdjacent;
@@ -1818,6 +1836,8 @@ char *val;
 List rowList; 			/* current row (List of TableFields)*/
 List tableList;			/* list of Row Lists */
 char *tptr;
+Pixel rowBg;			/* BGCOLOR from the current <tr> */
+int rowHasBg;
 
 	if (((*mptr)->type != M_TABLE) || ((*mptr)->is_end)) {
 		return(0);
@@ -1839,11 +1859,21 @@ char *tptr;
 		}
 	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"WIDTH");
 	TableParseWidth(tptr, &t->reqWidth, &t->reqPercent);
+	t->has_bg = False;
+	t->bg = (Pixel) 0;
+	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"BGCOLOR");
+	if (tptr != (char *) 0) {
+		if (HTMLAllocColor((Widget)hw, tptr, &t->bg)) {
+			t->has_bg = True;
+			}
+		}
 	tableList = ListCreate();
 	rowList = ListCreate();
 	ListAddEntry(tableList, rowList);
 	columnCount = 0;
 	rowCount=1;
+	rowBg = (Pixel) 0;
+	rowHasBg = 0;
 	m = *mptr;
 	field = (TableField *) 0;
 	while (m && (!((m->type == M_TABLE) && (m->is_end)))) {
@@ -1924,6 +1954,15 @@ char *tptr;
 			}
 
 		else if ((m->type == M_TABLE_ROW)&&(!m->is_end)) {
+			/* the row's BGCOLOR is the default for its cells */
+			rowHasBg = 0;
+			val = ParseMarkTag(m->start,MT_TABLE_ROW,"bgcolor");
+			if (val != (char *) 0) {
+				if (HTMLAllocColor((Widget)hw, val, &rowBg)) {
+					rowHasBg = 1;
+					}
+				}
+
 			/* expand at end of row */
 			while(TableExpandFields(tableList, rowList,
 						rowCount, &columnCount));
@@ -1987,6 +2026,16 @@ char *tptr;
 			TableParseWidth(val, &field->reqWidth,
 				&field->reqPercent);
 
+			val = ParseMarkTag(m->start,MT_TABLE_DATA,"bgcolor");
+			if ((val != (char *) 0)&&
+			    (HTMLAllocColor((Widget)hw, val, &field->bg))) {
+				field->has_bg = True;
+				}
+			else if (rowHasBg) {
+				field->bg = rowBg;
+				field->has_bg = True;
+				}
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -2034,6 +2083,16 @@ char *tptr;
 			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"width");
 			TableParseWidth(val, &field->reqWidth,
 				&field->reqPercent);
+
+			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"bgcolor");
+			if ((val != (char *) 0)&&
+			    (HTMLAllocColor((Widget)hw, val, &field->bg))) {
+				field->has_bg = True;
+				}
+			else if (rowHasBg) {
+				field->bg = rowBg;
+				field->has_bg = True;
+				}
 
 			TableFieldSetAttributes(hw,field,m);
 
@@ -2268,6 +2327,17 @@ int expandedWidth,expandedHeight;
 		y += t->captionHeight;
 		}
 
+	/* the table's own background, under everything (it also shows
+	   through the cell-spacing gaps between colored cells) */
+	if (t->has_bg) {
+		XSetForeground(XtDisplay(hw), hw->html.drawGC, t->bg);
+		XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
+			hw->html.drawGC, x, y,
+			(unsigned int)t->width,
+			(unsigned int)(t->height - t->captionHeight));
+		XSetForeground(XtDisplay(hw), hw->html.drawGC, eptr->fg);
+		}
+
 	field = t->table;
 	horizMarker = y+t->borders;
 	for (yy = 0; yy < t->numRows; yy++) {
@@ -2275,6 +2345,25 @@ int expandedWidth,expandedHeight;
 		rowHeight = field->rowHeight;
 		for (xx = 0; xx < t->numColumns; xx++) {
 			colWidth = field->colWidth;
+
+			/* the cell's background first, so grid lines and
+			   contents draw over it; continuation fields are
+			   covered by their anchor's expanded fill */
+			if ((field->has_bg)&&
+			    (!field->contVert)&&(!field->contHoriz)) {
+				TableGetExpandedDimensions(t, xx, yy,
+					&expandedWidth, &expandedHeight);
+				XSetForeground(XtDisplay(hw),
+					hw->html.drawGC, field->bg);
+				XFillRectangle(XtDisplay(hw),
+					XtWindow(hw->html.view),
+					hw->html.drawGC,
+					vertMarker, horizMarker,
+					(unsigned int)expandedWidth,
+					(unsigned int)expandedHeight);
+				XSetForeground(XtDisplay(hw),
+					hw->html.drawGC, eptr->fg);
+				}
 
 			/* draw field borders */
 			if (t->borders){
