@@ -809,6 +809,76 @@ static char *fetch_iframe_doc (char *absurl, char **texthead,
   return txt;
 }
 
+/* Frameset pages have no body: turn each <frame src=...> into an
+   <iframe src=...></iframe> and unwrap <noframes> so its fallback
+   content shows too, then let the iframe expansion inline the framed
+   documents exactly like it inlines iframes. */
+static char *expand_frameset (char *txt, char **texthead)
+{
+  struct str_buf out;
+  char *p = txt;
+
+  if (!ci_find (txt, "<frameset"))
+    return txt;
+
+  memset (&out, 0, sizeof (out));
+  for (;;)
+    {
+      char *lt = strchr (p, '<');
+      char *tagend;
+
+      if (!lt)
+        break;
+      sbuf_add (&out, p, lt - p);
+      tagend = strchr (lt, '>');
+      if (!tagend)
+        {
+          p = lt;
+          break;
+        }
+      if ((!my_strncasecmp (lt, "<frameset", 9)) &&
+          (isspace ((unsigned char)lt[9]) || lt[9] == '>'))
+        {
+          /* the wrapper renders nothing */
+        }
+      else if (!my_strncasecmp (lt, "</frameset", 10))
+        {
+        }
+      else if ((!my_strncasecmp (lt, "<noframes", 9)) &&
+               (isspace ((unsigned char)lt[9]) || lt[9] == '>'))
+        {
+          /* unwrap: the content inside shows */
+        }
+      else if (!my_strncasecmp (lt, "</noframes", 10))
+        {
+        }
+      else if ((!my_strncasecmp (lt, "<frame", 6)) &&
+               (isspace ((unsigned char)lt[6]) || lt[6] == '>' ||
+                lt[6] == '/'))
+        {
+          char *src = tag_attr (lt, tagend, "src");
+
+          if (src)
+            {
+              sbuf_adds (&out, "<iframe src=\"");
+              sbuf_adds (&out, src);
+              sbuf_adds (&out, "\"></iframe>\n");
+              free (src);
+            }
+        }
+      else
+        {
+          sbuf_add (&out, lt, (tagend - lt) + 1);
+        }
+      p = tagend + 1;
+    }
+  sbuf_adds (&out, p);
+
+  free (*texthead);
+  *texthead = out.buf;
+  return out.buf;
+}
+
 static char *expand_iframes (char *txt, char *base, char **texthead)
 {
   struct str_buf out;
@@ -1003,22 +1073,27 @@ static char *doit (char *url, char **texthead)
       else
         *texthead = NULL;
 
-      /* pull framed documents inline (top-level fetches only) */
+      /* pull framed documents inline (top-level fetches only);
+         framesets become runs of iframes first, so one splicer
+         serves both */
       if (iframe_depth == 0 && txt && *texthead)
         {
-          char *expanded = expand_iframes (txt,
+          char *orig = txt;
+          char *expanded;
+
+          expanded = expand_frameset (txt, texthead);
+          if (expanded != txt)
+            txt = expanded;
+          expanded = expand_iframes (txt,
                 use_this_url_instead ? use_this_url_instead : url,
                 texthead);
-
           if (expanded != txt)
+            txt = expanded;
+          if (txt != orig && HTMainText)
             {
-              txt = expanded;
-              if (HTMainText)
-                {
-                  HTMainText->htmlSrc = txt;
-                  HTMainText->htmlSrcHead = *texthead;
-                  HTMainText->srclen = strlen (txt);
-                }
+              HTMainText->htmlSrc = txt;
+              HTMainText->htmlSrcHead = *texthead;
+              HTMainText->srclen = strlen (txt);
             }
         }
       return txt;
