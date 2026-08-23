@@ -496,12 +496,15 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 					eptr->anchorSubject = ParseMarkTag(AnchorText,
 									   MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			break;
 		case E_BULLET:
@@ -552,6 +555,7 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 		case E_HRULE:
 			/*
@@ -605,6 +609,7 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 		case E_LINEFEED:
 			eptr->ele_id = ElementId;
@@ -687,6 +692,7 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 					eptr->anchorHRef = NULL;
 					eptr->anchorName = NULL;
 					eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 /*
  * Without motif we use our own foreground resource instead of
  * using the manager's
@@ -711,6 +717,8 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 							ParseMarkTag(AnchorText,
 								     MT_ANCHOR, AT_TITLE);
 					}
+					eptr->anchorTarget = ParseMarkTag(AnchorText,
+						MT_ANCHOR, "TARGET");
 				}
 			}
 			else
@@ -718,6 +726,7 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			break;
 		case E_IMAGE:
@@ -768,12 +777,15 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 
 			/*
@@ -918,6 +930,10 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 */
 			if (AnchorText != NULL)
 			{
@@ -932,12 +948,15 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			eptr->table_data = MakeTable (hw, edata,
 				(x + IMAGE_DEFAULT_BORDER), (y + IMAGE_DEFAULT_BORDER));
@@ -977,12 +996,15 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 
 			/*
@@ -1015,6 +1037,7 @@ CreateElement(hw, type, fp, x, y, edata, w, h, bw)
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 	}
 	return(eptr);
@@ -1153,6 +1176,10 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			if (AnchorText != NULL)
 			{
 				eptr->anchorHRef = ParseMarkTag(AnchorText,
@@ -1166,12 +1193,15 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			break;
 		case E_BULLET:
@@ -1235,9 +1265,14 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 		case E_HRULE:
 			/*
@@ -1304,9 +1339,14 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 		case E_LINEFEED:
 			eptr->ele_id = ElementId;
@@ -1389,6 +1429,10 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			if (AnchorText != NULL)
 			{
 				char *tptr;
@@ -1405,6 +1449,7 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 					eptr->anchorHRef = NULL;
 					eptr->anchorName = NULL;
 					eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 /*
  * Without motif we use our own foreground resource instead of
  * using the manager's
@@ -1429,6 +1474,8 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 							ParseMarkTag(AnchorText,
 								     MT_ANCHOR, AT_TITLE);
 					}
+					eptr->anchorTarget = ParseMarkTag(AnchorText,
+						MT_ANCHOR, "TARGET");
 				}
 			}
 			else
@@ -1436,6 +1483,7 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			break;
 		case E_IMAGE:
@@ -1497,6 +1545,10 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			if (AnchorText != NULL)
 			{
 				eptr->anchorHRef = ParseMarkTag(AnchorText,
@@ -1510,12 +1562,15 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 
 			/*
@@ -1656,6 +1711,10 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			if (AnchorText != NULL)
 			{
 				eptr->anchorHRef = ParseMarkTag(AnchorText,
@@ -1669,12 +1728,15 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
 				eptr->anchorHRef = NULL;
 				eptr->anchorName = NULL;
 				eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			}
 			eptr->table_data = MakeTable (hw, edata,
 				(x + IMAGE_DEFAULT_BORDER), (y + IMAGE_DEFAULT_BORDER));
@@ -1717,6 +1779,10 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			if (AnchorText != NULL)
 			{
 				eptr->anchorHRef = ParseMarkTag(AnchorText,
@@ -1730,6 +1796,8 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 						ParseMarkTag(AnchorText,
 							     MT_ANCHOR, AT_TITLE);
 				}
+				eptr->anchorTarget = ParseMarkTag(AnchorText,
+					MT_ANCHOR, "TARGET");
 			}
 			else
 			{
@@ -1781,9 +1849,14 @@ SetElement(hw, type, fp, x, y, edata, w, h, bw)
 			{
 				free((char *)eptr->anchorSubject);
 			}
+			if (eptr->anchorTarget != NULL)
+			{
+				free((char *)eptr->anchorTarget);
+			}
 			eptr->anchorHRef = NULL;
 			eptr->anchorName = NULL;
 			eptr->anchorSubject = NULL;
+			eptr->anchorTarget = NULL;
 			break;
 	}
 } /* SetElement() */

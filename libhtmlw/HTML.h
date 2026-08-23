@@ -148,6 +148,7 @@ typedef struct acall_rec {
 	int element_id;
 	char *text;
 	char *href;
+	char *target;	/* TARGET= of the anchor, or NULL */
 } WbAnchorCallbackData;
 
 
@@ -392,6 +393,7 @@ struct ele_rec {
 	char *anchorName;
 	char *anchorHRef;
 	char *anchorSubject;
+	char *anchorTarget;	/* TARGET= of the enclosing <a>, or NULL */
 	char *edata;
 	int edata_len;
 	struct ele_rec *next;

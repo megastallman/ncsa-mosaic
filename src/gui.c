@@ -1067,6 +1067,18 @@ static XmxCallback (anchor_cb)
   if (!win)
     return;
 
+  /* a TARGET= naming anything but this window opens a new one, the
+     way frameless browsers treated named targets */
+  {
+    char *ltarget = ((WbAnchorCallbackData *)call_data)->target;
+
+    if (ltarget && *ltarget &&
+        my_strcasecmp (ltarget, "_self") &&
+        my_strcasecmp (ltarget, "_top") &&
+        my_strcasecmp (ltarget, "_parent"))
+      force_newwin = 1;
+  }
+
   if (cci_event) MoCCISendEventOutput(MOSAIC_URL_TRIGGER);
 
   /* if shift was down, make this a Load to Local Disk -- amb */

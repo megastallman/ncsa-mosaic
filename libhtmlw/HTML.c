@@ -4379,6 +4379,7 @@ _HTMLInput(
 				cbdata.href = buf;
 				/* cbdata.href = eptr->anchorHRef; */
 				cbdata.text = tptr;
+				cbdata.target = eptr->anchorTarget;
 				XtCallCallbackList ((Widget)hw,
 					hw->html.anchor_callback,
 					(XtPointer)&cbdata);
