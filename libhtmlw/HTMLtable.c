@@ -57,7 +57,30 @@ CellRun *lr;
 	lr->image = image;
 	lr->winfo = winfo;
 	lr->table = (struct table_rec *) table;
+	lr->linebreak = 0;
 	field->run_cnt++;
+}
+
+/* append n explicit line breaks (<br>; two for a paragraph break) */
+static void TableAddBreak(field, n)
+TableField *field;
+int n;
+{
+CellRun *lr;
+
+	while (n-- > 0) {
+		field->runs = (CellRun *)realloc(field->runs,
+			(field->run_cnt + 1) * sizeof(CellRun));
+		lr = &field->runs[field->run_cnt];
+		lr->text = (char *) 0;
+		lr->href = (char *) 0;
+		lr->font = (XFontStruct *) 0;
+		lr->image = (ImageInfo *) 0;
+		lr->winfo = (WidgetInfo *) 0;
+		lr->table = (struct table_rec *) 0;
+		lr->linebreak = 1;
+		field->run_cnt++;
+		}
 }
 
 static TableField *NewTableField()
@@ -573,6 +596,7 @@ struct cell_word {
 	int len;
 	int width;
 	int run;
+	int brk;	/* explicit <br>s directly before this word */
 	int ln;		/* line this word landed on */
 	int lx;		/* x offset within its line */
 };
@@ -616,13 +640,19 @@ CellRun *run;
 		}
 
 	/* split text runs into words; an image or widget item is one
-	   pseudo-word of its own size */
+	   pseudo-word of its own size; a <br> run marks the next word */
 	words = (struct cell_word *) 0;
 	nwords = 0;
 	wcap = 0;
+	{
+	int pendbrk = 0;
+
 	for (r = 0; r < field->run_cnt; r++) {
 		run = &field->runs[r];
-		if (run->text != (char *) 0) {
+		if (run->linebreak) {
+			pendbrk++;
+			}
+		else if (run->text != (char *) 0) {
 			char *p = run->text;
 			char *ws, *we;
 
@@ -644,6 +674,8 @@ CellRun *run;
 				words[nwords].width = HTMLTextWidth(rfont,
 					ws, words[nwords].len);
 				words[nwords].run = r;
+				words[nwords].brk = pendbrk;
+				pendbrk = 0;
 				nwords++;
 				p = we;
 				}
@@ -670,9 +702,12 @@ CellRun *run;
 					((TableInfo *)run->table)->width;
 				}
 			words[nwords].run = r;
+			words[nwords].brk = pendbrk;
+			pendbrk = 0;
 			nwords++;
 			}
 		}
+	}
 	if (nwords == 0) {
 		if (words != (struct cell_word *) 0) {
 			free((char *)words);
@@ -697,6 +732,12 @@ CellRun *run;
 		    (field->runs[words[i - 1].run].table !=
 		     (struct table_rec *) 0)) {
 			blocky = 1;
+			}
+		/* explicit <br>s: end the current line; each extra one
+		   leaves a blank line behind */
+		if (words[i].brk > 0) {
+			line += words[i].brk;
+			cx = 0;
 			}
 		rfont = (run->font != (XFontStruct *) 0) ?
 			run->font : field->font;
@@ -777,6 +818,14 @@ CellRun *run;
 			}
 		if ((words[i].lx + words[i].width) > linew[ln]) {
 			linew[ln] = words[i].lx + words[i].width;
+			}
+		}
+	/* a line no word landed on (consecutive <br>s) is blank but
+	   still one text line tall */
+	for (i = 0; i < nlines; i++) {
+		if ((lineasc[i] == 0)&&(linedesc[i] == 0)) {
+			lineasc[i] = field->font->max_bounds.ascent;
+			linedesc[i] = field->font->max_bounds.descent;
 			}
 		}
 	totalh = 0;
@@ -1675,6 +1724,7 @@ int len;
 					lr->image = (ImageInfo *) 0;
 					lr->winfo = (WidgetInfo *) 0;
 					lr->table = (struct table_rec *) 0;
+					lr->linebreak = 0;
 					field->run_cnt++;
 					}
 				}
@@ -1827,6 +1877,16 @@ int len;
 						fstack[fdepth++] = cur_font;
 						}
 					cur_font = hw->html.fixed_font;
+					break;
+			case M_LINEBREAK:
+					TableAddBreak(field, 1);
+					break;
+			case M_PARAGRAPH:
+					/* a blank line between paragraphs;
+					   nothing at the top of the cell */
+					if (field->run_cnt > 0) {
+						TableAddBreak(field, 2);
+						}
 					break;
 			}
 		    }

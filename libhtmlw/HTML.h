@@ -255,6 +255,7 @@ typedef struct cell_run {
 	ImageInfo *image;	/* an inline image item */
 	WidgetInfo *winfo;	/* an inline form widget item */
 	struct table_rec *table; /* a nested table item */
+	int	linebreak;	/* an explicit <br>: forces a new flow line */
 } CellRun;
 
 typedef struct table_field {
