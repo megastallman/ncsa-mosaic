@@ -130,6 +130,7 @@ TableField *tf;
 }
 
 extern int HTMLAllocColor();
+extern char *ParseStyleValue();
 
 
 /* parse a WIDTH= attribute value: "50%" style into *pct, plain
@@ -163,6 +164,49 @@ int n;
 		}
 }
 
+
+/* a color from an inline STYLE attribute: background-color (or the
+   first token of a background shorthand) when want_bg is set, else
+   the color property; 1 when *pix was set */
+static int TableStyleColor(hw, text, tag, want_bg, pix)
+HTMLWidget hw;
+char *text;
+char *tag;
+int want_bg;
+Pixel *pix;
+{
+char *style, *v, *sp;
+int got = 0;
+
+	if (text == (char *) 0) {
+		return(0);
+		}
+	style = ParseMarkTag(text, tag, "STYLE");
+	if (style == (char *) 0) {
+		return(0);
+		}
+	if (want_bg) {
+		v = ParseStyleValue(style, "background-color");
+		if (v == (char *) 0) {
+			v = ParseStyleValue(style, "background");
+			if (v != (char *) 0) {
+				/* shorthand: the color is one token */
+				for (sp = v; (*sp)&&
+					(!isspace((unsigned char)*sp)); sp++);
+				*sp = '\0';
+				}
+			}
+		}
+	else {
+		v = ParseStyleValue(style, "color");
+		}
+	if (v != (char *) 0) {
+		got = HTMLAllocColor((Widget)hw, v, pix);
+		free(v);
+		}
+	free(style);
+	return(got);
+}
 
 /* resolve a BACKGROUND= image attribute into an ImageInfo, or NULL */
 static ImageInfo *TableResolveBackground(hw, text, tag)
@@ -1728,6 +1772,18 @@ int len;
 	int coldepth = 0;
 	Pixel cur_fg = (Pixel) 0;
 	int cur_has_fg = 0;
+
+	/* a color: in the cell's own STYLE tints all its text */
+	{
+		Pixel np;
+
+		if (TableStyleColor(hw, mptr->start,
+			(mptr->type == M_TABLE_HEADER) ? "th" : "td",
+			0, &np)) {
+			cur_fg = np;
+			cur_has_fg = 1;
+			}
+	}
 	XFontStruct *base_font;
 	XFontStruct *cur_font;
 
@@ -2056,6 +2112,19 @@ int len;
 								}
 							free(cv);
 							}
+						else {
+							/* <font style=> or <span
+							   style=>: ParseMarkTag
+							   only skips the name's
+							   LENGTH; both are 4 */
+							np = cur_fg;
+							if (TableStyleColor(hw,
+							    m->start, "font", 0,
+							    &np)) {
+								cur_fg = np;
+								cur_has_fg = 1;
+								}
+							}
 						}
 					break;
 			case M_LINEBREAK:
@@ -2160,6 +2229,12 @@ int ci;
 	tptr = ParseMarkTag(((*mptr)->start),MT_TABLE,"BGCOLOR");
 	if (tptr != (char *) 0) {
 		if (HTMLAllocColor((Widget)hw, tptr, &t->bg)) {
+			t->has_bg = True;
+			}
+		}
+	if (!t->has_bg) {
+		if (TableStyleColor(hw, (*mptr)->start, MT_TABLE, 1,
+				&t->bg)) {
 			t->has_bg = True;
 			}
 		}
@@ -2324,6 +2399,12 @@ int ci;
 					rowHasBg = 1;
 					}
 				}
+			if (!rowHasBg) {
+				if (TableStyleColor(hw, m->start,
+						MT_TABLE_ROW, 1, &rowBg)) {
+					rowHasBg = 1;
+					}
+				}
 			/* likewise the row's VALIGN */
 			val = ParseMarkTag(m->start,MT_TABLE_ROW,"valign");
 			rowValign = TableParseValign(val, ALIGN_MIDDLE);
@@ -2405,6 +2486,10 @@ int ci;
 			    (HTMLAllocColor((Widget)hw, val, &field->bg))) {
 				field->has_bg = True;
 				}
+			else if (TableStyleColor(hw, m->start, MT_TABLE_DATA,
+					1, &field->bg)) {
+				field->has_bg = True;
+				}
 			else if (rowHasBg) {
 				field->bg = rowBg;
 				field->has_bg = True;
@@ -2481,6 +2566,10 @@ int ci;
 			val = ParseMarkTag(m->start,MT_TABLE_HEADER,"bgcolor");
 			if ((val != (char *) 0)&&
 			    (HTMLAllocColor((Widget)hw, val, &field->bg))) {
+				field->has_bg = True;
+				}
+			else if (TableStyleColor(hw, m->start, MT_TABLE_HEADER,
+					1, &field->bg)) {
 				field->has_bg = True;
 				}
 			else if (rowHasBg) {

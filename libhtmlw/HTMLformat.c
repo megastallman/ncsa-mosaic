@@ -312,11 +312,73 @@ static int Subscript;
 static XFontStruct *nonScriptFont;
 static int InDocHead;
 static int InUnderlined;
-/* <font COLOR=...>: the current text color nests on a stack;
-   elements pick up the Fg global at creation */
+/* <font COLOR=...> and inline style colors: the current text color
+   nests on a stack; elements pick up the Fg global at creation.
+   Depth counts past the array so pushes and pops stay balanced on
+   absurdly deep nesting. */
 extern int HTMLAllocColor();
+extern char *ParseStyleValue();
 static Pixel FgStack[64];
 static int FgDepth;
+
+static void FgPush(np)
+	Pixel np;
+{
+	if (FgDepth < 64)
+	{
+		FgStack[FgDepth] = Fg;
+	}
+	FgDepth++;
+	Fg = np;
+}
+
+static void FgPop()
+{
+	if (FgDepth > 0)
+	{
+		FgDepth--;
+		if (FgDepth < 64)
+		{
+			Fg = FgStack[FgDepth];
+		}
+	}
+}
+
+/* the color: of a mark's inline STYLE attribute; 1 when *pix is set */
+static int MarkStyleColor(hw, mark, pix)
+	HTMLWidget hw;
+	struct mark_up *mark;
+	Pixel *pix;
+{
+	char tagname[24];
+	char *style, *cval;
+	int i, got = 0;
+
+	if (mark->start == NULL)
+	{
+		return(0);
+	}
+	for (i = 0; (i < 23)&&(mark->start[i] != '\0')&&
+		(mark->start[i] != '/')&&
+		(!isspace((int)mark->start[i])); i++)
+	{
+		tagname[i] = mark->start[i];
+	}
+	tagname[i] = '\0';
+	style = ParseMarkTag(mark->start, tagname, "STYLE");
+	if (style == NULL)
+	{
+		return(0);
+	}
+	cval = ParseStyleValue(style, "color");
+	if (cval != NULL)
+	{
+		got = HTMLAllocColor((Widget)hw, cval, pix);
+		free(cval);
+	}
+	free(style);
+	return(got);
+}
 
 /* horizontal block alignment: <center> and ALIGN= on <div> and the
    headers nest (stack); ALIGN= on <p> reaches to the next block or
@@ -333,7 +395,7 @@ static int CurrentBlockAlign()
 	}
 	if (AlignDepth > 0)
 	{
-		return(AlignStack[AlignDepth - 1]);
+		return(AlignStack[(AlignDepth <= 64 ? AlignDepth : 64) - 1]);
 	}
 	return(0);
 }
@@ -348,8 +410,9 @@ static void AlignPush(al)
 	}
 	if (AlignDepth < 64)
 	{
-		AlignStack[AlignDepth++] = al;
+		AlignStack[AlignDepth] = al;
 	}
+	AlignDepth++;	/* count past capacity so pops stay balanced */
 }
 
 static void AlignPop()
@@ -6062,17 +6125,25 @@ int *x, *y;
 	case M_DIV:
 		ConditionalLineFeed(hw, x, y, 1);
 		if (mark->is_end)
+		{
 			AlignPop();
+			FgPop();
+		}
 		else
+		{
+			Pixel np;
+
+			np = Fg;
+			MarkStyleColor(hw, mark, &np);
 			AlignPush(ParseBlockAlign(mark, "div"));
+			FgPush(np);
+		}
 		break;
 	case M_FONT:
+		/* <font COLOR=> and <span style="color:..."> both */
 		if (mark->is_end)
 		{
-			if (FgDepth > 0)
-			{
-				Fg = FgStack[--FgDepth];
-			}
+			FgPop();
 		}
 		else
 		{
@@ -6086,11 +6157,11 @@ int *x, *y;
 				HTMLAllocColor((Widget)hw, val, &np);
 				free(val);
 			}
-			if (FgDepth < 64)
+			else
 			{
-				FgStack[FgDepth++] = Fg;
+				MarkStyleColor(hw, mark, &np);
 			}
-			Fg = np;
+			FgPush(np);
 		}
 		break;
 		/*

@@ -1685,7 +1685,7 @@ static struct
 	{"html", M_NOOP},
 	{"meta", M_META},
 	{"link", M_NOOP},
-	{"span", M_NOOP},
+	{"span", M_FONT},	/* for style="color:..." */
 	{"small", M_NOOP},
 	{"abbr", M_NOOP},
 	{"acronym", M_NOOP},
@@ -2206,6 +2206,78 @@ AnchorTag(ptrp, startp, endp)
  * If the passed tag is not found, return NULL.
  * If the passed tag is found but has no value, return "".
  */
+/* Pull one property's value out of an inline STYLE attribute:
+ * ParseStyleValue("color:#800; background: red", "color") gives
+ * "#800" (malloc'd, trimmed); NULL when the property is absent. */
+char *ParseStyleValue(style, prop)
+	char *style;
+	char *prop;
+{
+	char *p;
+	int plen;
+
+	if ((style == NULL)||(prop == NULL))
+	{
+		return(NULL);
+	}
+	plen = strlen(prop);
+	p = style;
+	while (*p != '\0')
+	{
+		char *name, *nend, *val, *vend;
+
+		while ((*p != '\0')&&(isspace((int)*p)||(*p == ';')))
+		{
+			p++;
+		}
+		if (*p == '\0')
+		{
+			break;
+		}
+		name = p;
+		while ((*p != '\0')&&(*p != ':')&&(*p != ';'))
+		{
+			p++;
+		}
+		if (*p != ':')
+		{
+			continue;
+		}
+		nend = p;
+		while ((nend > name)&&(isspace((int)nend[-1])))
+		{
+			nend--;
+		}
+		p++;
+		while ((*p != '\0')&&(isspace((int)*p)))
+		{
+			p++;
+		}
+		val = p;
+		while ((*p != '\0')&&(*p != ';'))
+		{
+			p++;
+		}
+		vend = p;
+		while ((vend > val)&&(isspace((int)vend[-1])))
+		{
+			vend--;
+		}
+		if (((int)(nend - name) == plen)&&
+			(caseless_equal_prefix(name, prop, plen)))
+		{
+			char *ret;
+
+			ret = (char *)malloc((vend - val) + 1);
+			memcpy(ret, val, vend - val);
+			ret[vend - val] = '\0';
+			return(ret);
+		}
+	}
+	return(NULL);
+}
+
+
 char* ParseMarkTag(text, mtext, mtag)
 	char *text;
 	char *mtext;
