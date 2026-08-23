@@ -1059,26 +1059,83 @@ int accumulateColWidth;
 		   any height: widths still grow in the uniform-column
 		   pass below, and a cell measured at a narrower width
 		   than it is drawn at wraps to more lines than the
-		   draw, leaving dead space at the bottom of the table */
-		for (x = 0; x < t->numColumns; x++) {
-			for (y = 0; y < t->numRows; y++) {
-				field = &(t->table[y*t->numColumns+x]);
-				field->colWidth = (int) (percentToShrink *
-				     ((float) CalculateMaxWidthOfColumn(t,x)));
-				/* never squeeze below the longest word
-				   (or a nested table's min-content) PLUS
-				   the padding the draw indents by, or
-				   the word bleeds into the next cell;
-				   overflowing the page beats unreadable
-				   sliver columns */
-				if (field->colWidth < (field->minWidth +
-						2 * FIELD_BORDER_SPACE)) {
-					field->colWidth = field->minWidth +
-						2 * FIELD_BORDER_SPACE;
+		   draw, leaving dead space at the bottom of the table.
+
+		   Distribute pageWidth with the floors taken out first:
+		   a column pinned at its longest-word floor (plus the
+		   padding the draw indents by) is frozen, and only the
+		   still-shrinkable columns divide what remains.  The
+		   naive shrink-then-floor-each-column-alone pushed the
+		   total past the page by the sum of the floors that
+		   bit (opennet's front page: bullet and date columns
+		   floored, the headline column got its proportional
+		   share anyway and poked past the right edge). */
+		{
+			int *cmax, *cmin, *cfroze;
+			int spent, maxsum, changed, w;
+			float scale;
+
+			cmax = (int *)malloc(t->numColumns * sizeof(int));
+			cmin = (int *)malloc(t->numColumns * sizeof(int));
+			cfroze = (int *)malloc(t->numColumns * sizeof(int));
+			for (x = 0; x < t->numColumns; x++) {
+				cmax[x] = CalculateMaxWidthOfColumn(t,x) +
+					2 * FIELD_BORDER_SPACE;
+				cmin[x] = 2 * FIELD_BORDER_SPACE;
+				for (y = 0; y < t->numRows; y++) {
+					w = t->table[y*t->numColumns+x].minWidth
+						+ 2 * FIELD_BORDER_SPACE;
+					if (w > cmin[x]) {
+						cmin[x] = w;
+						}
 					}
-				field->rowHeight = 0;
+				if (cmax[x] < cmin[x]) {
+					cmax[x] = cmin[x];
+					}
+				cfroze[x] = 0;
 				}
-			}
+			scale = 0.0;
+			do {
+				changed = 0;
+				spent = 0;
+				maxsum = 0;
+				for (x = 0; x < t->numColumns; x++) {
+					if (cfroze[x]) {
+						spent += cmin[x];
+						}
+					else {
+						maxsum += cmax[x];
+						}
+					}
+				if (maxsum > 0) {
+					scale = ((float)(pageWidth - spent)) /
+						((float)maxsum);
+					if (scale > 1.0) {
+						scale = 1.0;
+						}
+					for (x = 0; x < t->numColumns; x++) {
+						if ((!cfroze[x])&&
+						    ((scale * (float)cmax[x]) <
+						     (float)cmin[x])) {
+							cfroze[x] = 1;
+							changed = 1;
+							}
+						}
+					}
+				} while (changed);
+			for (x = 0; x < t->numColumns; x++) {
+				w = cfroze[x] ? cmin[x] :
+					(int)(scale * (float)cmax[x]);
+				for (y = 0; y < t->numRows; y++) {
+					field = &(t->table[y*t->numColumns+x]);
+					field->colWidth = w;
+					field->rowHeight = 0;
+					}
+				}
+			free((char *)cmax);
+			free((char *)cmin);
+			free((char *)cfroze);
+		}
 
 		/* divy up width with adjacent continue Horizontal fields*/
 		for (y = 0; y < t->numRows; y++) {
