@@ -2950,6 +2950,48 @@ ImagePlace(hw, mptr, x, y, width)
 	SetElement(hw, E_IMAGE, currentFont, *x, *y, tmpPtr, wTmp, hTmp, border_width);
 
 	/*
+	 * ALT text: when the image could not be fetched or decoded (the
+	 * resolver handed back the shared no-image icon), show the ALT
+	 * text as ordinary inline text instead -- image nav bars stay
+	 * usable.  The element is converted in place: anchor fields and
+	 * colors were already stamped on it the same way text gets them.
+	 */
+	tptr = ParseMarkTag(mptr->start, MT_IMAGE, "ALT");
+	if ((tptr != NULL)&&(Current->pic_data != NULL)&&
+	    (!Current->pic_data->delayed)&&
+	    (Current->pic_data == NoImageData(hw)))
+	{
+		int dir, ascent, descent;
+		XCharStruct all;
+
+		Current->type = E_TEXT;
+		Current->pic_data = NULL; /* the icon is a shared static */
+		if (Current->edata != NULL)
+		{
+			free(Current->edata);
+		}
+		Current->edata_len = strlen(tptr) + 1;
+		Current->edata = (char *)malloc(Current->edata_len);
+		strcpy(Current->edata, tptr);
+		Current->font = currentFont;
+		Current->y_offset = 0;
+		HTMLTextExtents(currentFont, tptr, strlen(tptr),
+			&dir, &ascent, &descent, &all);
+		Current->width = all.width;
+		AdjustBaseLine();
+		*x = *x + all.width;
+		CharsInLine = CharsInLine + strlen(tptr);
+		free(tptr);
+		PF_LF_State = 0;
+		NeedSpace = 1;
+		return;
+	}
+	if (tptr != NULL)
+	{
+		free(tptr);
+	}
+
+	/*
 	 * Only after we have placed the image do we know its dimensions.
 	 * So now look and see if the image is too wide, and if so go
 	 * back and insert a linebreak.

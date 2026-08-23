@@ -1907,6 +1907,46 @@ int len;
 							    (WidgetInfo *) 0,
 							    (TableInfo *) 0);
 							}
+						    else {
+							char *alt;
+
+							/* the image failed:
+							   show its ALT text
+							   as a run instead */
+							alt = ParseMarkTag(
+							    m->start,
+							    MT_IMAGE, "ALT");
+							if ((alt != (char *) 0)&&
+							    (*alt)) {
+							    CellRun *lr;
+
+							    field->runs =
+								(CellRun *)realloc(
+								field->runs,
+								(field->run_cnt+1)
+								* sizeof(CellRun));
+							    lr = &field->runs[
+								field->run_cnt];
+							    lr->text =
+								strdup(alt);
+							    lr->href =
+								(cur_href != 0) ?
+								strdup(cur_href) :
+								(char *) 0;
+							    lr->font = cur_font;
+							    lr->image =
+								(ImageInfo *) 0;
+							    lr->winfo =
+								(WidgetInfo *) 0;
+							    lr->table =
+								(struct table_rec *) 0;
+							    lr->linebreak = 0;
+							    field->run_cnt++;
+							    }
+							if (alt != (char *) 0) {
+							    free(alt);
+							    }
+							}
 						    }
 						}
 					break;
