@@ -65,6 +65,33 @@
 
 /*SWP*/
 extern char pre_title[80];
+
+/* Document titles are UTF-8 (everything is converted on the way in),
+   but XmNtitle becomes the ICCCM WM_NAME property, which window
+   managers read as Latin-1 -- Cyrillic titles turn to mojibake in
+   the title bar.  Stamp _NET_WM_NAME/_NET_WM_ICON_NAME (UTF8_STRING)
+   as well; every modern window manager prefers those. */
+static void mo_set_utf8_wm_title(base, title)
+Widget base;
+char *title;
+{
+  Display *dsp;
+  Atom prop, utf8;
+
+  if ((base == NULL) || (!XtIsRealized(base)) || (title == NULL))
+    return;
+
+  dsp = XtDisplay(base);
+  utf8 = XInternAtom(dsp, "UTF8_STRING", False);
+  prop = XInternAtom(dsp, "_NET_WM_NAME", False);
+  XChangeProperty(dsp, XtWindow(base), prop, utf8, 8,
+                  PropModeReplace,
+                  (unsigned char *)title, (int)strlen(title));
+  prop = XInternAtom(dsp, "_NET_WM_ICON_NAME", False);
+  XChangeProperty(dsp, XtWindow(base), prop, utf8, 8,
+                  PropModeReplace,
+                  (unsigned char *)title, (int)strlen(title));
+}
 extern int cci_event;
 extern char *cached_url;
 extern int binary_transfer;
@@ -200,6 +227,7 @@ char *buf=NULL;
 		XtVaSetValues(win->base,
 			     XmNtitle,buf,
 			     NULL);
+		mo_set_utf8_wm_title(win->base, buf);
 		free(buf);
 	}
 	else if (win && win->base) {
@@ -213,6 +241,7 @@ char *buf=NULL;
 		XtVaSetValues(win->base,
 			     XmNtitle,buf,
 			     NULL);
+		mo_set_utf8_wm_title(win->base, buf);
 		free(buf);
 	}
   }
