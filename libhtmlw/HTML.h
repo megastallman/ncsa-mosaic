@@ -281,6 +281,7 @@ typedef struct table_field {
 	Boolean	has_bg;		/* BGCOLOR= given (here or on the row) */
 	Pixel	bg;		/* allocated background pixel */
 	Boolean	nowrap;		/* NOWRAP: never wrap this cell's content */
+	ImageInfo *bg_image;	/* BACKGROUND= tile, or NULL */
 	Boolean	header;		/* is this field created with <TH> or <TD> */
 
 	/* contents */
@@ -315,6 +316,7 @@ typedef struct table_rec {
 	Pixel	bg;		/* allocated background pixel */
 	int	cellspacing;	/* gap between cells and around the grid */
 	int	cellpadding;	/* inset between a cell's edge and content */
+	ImageInfo *bg_image;	/* BACKGROUND= tile, or NULL */
 	TableField *table;
 } TableInfo;
 

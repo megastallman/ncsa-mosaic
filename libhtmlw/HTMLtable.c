@@ -124,6 +124,7 @@ TableField *tf;
 	tf->has_bg = False;
 	tf->bg = (Pixel) 0;
 	tf->nowrap = False;
+	tf->bg_image = (ImageInfo *) 0;
 
 	return(tf);
 }
@@ -162,6 +163,32 @@ int n;
 		}
 }
 
+
+/* resolve a BACKGROUND= image attribute into an ImageInfo, or NULL */
+static ImageInfo *TableResolveBackground(hw, text, tag)
+HTMLWidget hw;
+char *text;
+char *tag;
+{
+char *src;
+ImageInfo *img;
+
+	if ((text == (char *) 0)||(hw->html.resolveImage == NULL)) {
+		return((ImageInfo *) 0);
+		}
+	src = ParseMarkTag(text, tag, "BACKGROUND");
+	if (src == (char *) 0) {
+		return((ImageInfo *) 0);
+		}
+	img = (ImageInfo *)(*(resolveImageProc)(hw->html.resolveImage))
+		((Widget)hw, src, 0, NULL, NULL);
+	free(src);
+	if ((img != (ImageInfo *) 0)&&(img->width > 0)&&
+	    (img->image_data != NULL)) {
+		return(img);
+		}
+	return((ImageInfo *) 0);
+}
 
 /* parse a VALIGN= attribute value; dflt comes back for anything
    unrecognized (baseline behaves like top here) */
@@ -2133,6 +2160,7 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 			t->has_bg = True;
 			}
 		}
+	t->bg_image = TableResolveBackground(hw, (*mptr)->start, MT_TABLE);
 	/* defaults close to the classic hardcoded look (an inset of 5
 	   per cell): pad 2 + space 2 */
 	t->cellspacing = 2;
@@ -2355,6 +2383,9 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 				free(val);
 				}
 
+			field->bg_image = TableResolveBackground(hw,
+				m->start, MT_TABLE_DATA);
+
 			TableFieldSetAttributes(hw,field,m);
 
 			ListAddEntry(rowList, field);
@@ -2429,6 +2460,9 @@ int rowReqHeight;		/* HEIGHT from the current <tr> */
 				field->nowrap = True;
 				free(val);
 				}
+
+			field->bg_image = TableResolveBackground(hw,
+				m->start, MT_TABLE_HEADER);
 
 			TableFieldSetAttributes(hw,field,m);
 
@@ -2603,6 +2637,33 @@ int x,y;
 
 
 
+/* fill a rectangle with a BACKGROUND= tile (materializing its pixmap
+   on first use); returns 0 when the tile is unusable so the caller
+   can fall back to a solid color */
+static int TableTileFill(hw, bgi, x, y, w, h)
+HTMLWidget hw;
+ImageInfo *bgi;
+int x, y, w, h;
+{
+	if (bgi == (ImageInfo *) 0) {
+		return(0);
+		}
+	if ((bgi->image == None)&&(bgi->image_data != NULL)) {
+		bgi->image = InfoToImage(hw, bgi, 0);
+		}
+	if (bgi->image == None) {
+		return(0);
+		}
+	XSetFillStyle(XtDisplay(hw), hw->html.drawGC, FillTiled);
+	XSetTile(XtDisplay(hw), hw->html.drawGC, bgi->image);
+	XSetTSOrigin(XtDisplay(hw), hw->html.drawGC, x, y);
+	XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
+		hw->html.drawGC, x, y,
+		(unsigned int)w, (unsigned int)h);
+	XSetFillStyle(XtDisplay(hw), hw->html.drawGC, FillSolid);
+	return(1);
+}
+
 /* draw a table (and, through TableDisplayField, any tables nested
    in its cells) with its origin at x,y in view coordinates */
 static void TableDraw(hw,eptr,t,x,y)
@@ -2667,8 +2728,12 @@ int expandedWidth,expandedHeight;
 		}
 
 	/* the table's own background, under everything (it also shows
-	   through the cell-spacing gaps between colored cells) */
-	if (t->has_bg) {
+	   through the cell-spacing gaps between colored cells); a
+	   BACKGROUND= tile wins over a solid BGCOLOR */
+	if (TableTileFill(hw, t->bg_image, x, y, t->width,
+			t->height - t->captionHeight)) {
+		}
+	else if (t->has_bg) {
 		XSetForeground(XtDisplay(hw), hw->html.drawGC, t->bg);
 		XFillRectangle(XtDisplay(hw), XtWindow(hw->html.view),
 			hw->html.drawGC, x, y,
@@ -2687,21 +2752,30 @@ int expandedWidth,expandedHeight;
 
 			/* the cell's background first, so grid lines and
 			   contents draw over it; continuation fields are
-			   covered by their anchor's expanded fill */
-			if ((field->has_bg)&&
+			   covered by their anchor's expanded fill.  A
+			   BACKGROUND= tile wins over a solid BGCOLOR. */
+			if (((field->has_bg)||
+			     (field->bg_image != (ImageInfo *) 0))&&
 			    (!field->contVert)&&(!field->contHoriz)) {
 				TableGetExpandedDimensions(t, xx, yy,
 					&expandedWidth, &expandedHeight);
-				XSetForeground(XtDisplay(hw),
-					hw->html.drawGC, field->bg);
-				XFillRectangle(XtDisplay(hw),
-					XtWindow(hw->html.view),
-					hw->html.drawGC,
-					vertMarker, horizMarker,
-					(unsigned int)expandedWidth,
-					(unsigned int)expandedHeight);
-				XSetForeground(XtDisplay(hw),
-					hw->html.drawGC, eptr->fg);
+				if (TableTileFill(hw, field->bg_image,
+						vertMarker, horizMarker,
+						expandedWidth,
+						expandedHeight)) {
+					}
+				else if (field->has_bg) {
+					XSetForeground(XtDisplay(hw),
+						hw->html.drawGC, field->bg);
+					XFillRectangle(XtDisplay(hw),
+						XtWindow(hw->html.view),
+						hw->html.drawGC,
+						vertMarker, horizMarker,
+						(unsigned int)expandedWidth,
+						(unsigned int)expandedHeight);
+					XSetForeground(XtDisplay(hw),
+						hw->html.drawGC, eptr->fg);
+					}
 				}
 
 			/* draw field borders: with spacing the cells are
