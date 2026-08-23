@@ -589,19 +589,29 @@ CellRun *run;
 		}
 
 	/* greedy line breaking; inter-word gaps use the incoming
-	   word's font so joined segments measure exactly */
+	   word's font so joined segments measure exactly.  A nested
+	   table is block-level: it always takes a line of its own, or
+	   sibling tables (opennet comment threads) sit side by side */
 	cx = 0;
 	line = 0;
 	maxlinew = 0;
 	for (i = 0; i < nwords; i++) {
 		int sp;
+		int blocky;
 
 		run = &field->runs[words[i].run];
+		blocky = (run->table != (struct table_rec *) 0);
+		if ((!blocky)&&(i > 0)&&
+		    (field->runs[words[i - 1].run].table !=
+		     (struct table_rec *) 0)) {
+			blocky = 1;
+			}
 		rfont = (run->font != (XFontStruct *) 0) ?
 			run->font : field->font;
 		sp = HTMLTextWidth(rfont, " ", 1);
 		if ((cx > 0)&&
-		    ((cx + sp + words[i].width) > width)) {
+		    (blocky ||
+		     ((cx + sp + words[i].width) > width))) {
 			line++;
 			cx = 0;
 			}
@@ -1000,19 +1010,13 @@ int accumulateColWidth;
 	/* will have to squeeze fields downward to fit on page */
 
 		percentToShrink = ((float)pageWidth)/((float)sumMaxWidth);
-		for (x = 0; x < t->numColumns; x++) {
-			/*find max width of this column */
-/*
-			maxWidthOfColumn = 0;
-			for (y = 0; y < t->numRows; y++) {
-				maxWidthOfColumn = (maxWidthOfColumn >
-					t->table[y*t->numColumns+x].maxWidth) ?
-					maxWidthOfColumn :
-					t->table[y*t->numColumns+x].maxWidth;
-				}
-*/
 
-			/* format it */
+		/* settle the column widths COMPLETELY before measuring
+		   any height: widths still grow in the uniform-column
+		   pass below, and a cell measured at a narrower width
+		   than it is drawn at wraps to more lines than the
+		   draw, leaving dead space at the bottom of the table */
+		for (x = 0; x < t->numColumns; x++) {
 			for (y = 0; y < t->numRows; y++) {
 				field = &(t->table[y*t->numColumns+x]);
 				field->colWidth = (int) (percentToShrink *
@@ -1024,43 +1028,6 @@ int accumulateColWidth;
 					field->colWidth = field->minWidth;
 					}
 				field->rowHeight = 0;
-				numAdjacent = TableHowManyConnectedHorizFields
-									(t,x,y);
-				/* calculate the width including connected */
-				accumulateColWidth = field->colWidth;
-				for (xx = x+1; xx < x+numAdjacent+1; xx++) {
-				    accumulateColWidth += (
-					(percentToShrink *
-                                        ((float) CalculateMaxWidthOfColumn(t,xx))));
-				    }
-
-				if (field->type == F_TEXT) {
-					int th;
-
-					/* measure at the width the draw
-					   will really flow at (it pads by
-					   FIELD_BORDER_SPACE on each side)
-					   or the last line gets clipped */
-					TableCellFlow(hw,
-						(struct ele_rec *) 0,
-						field, 0, 0,
-						accumulateColWidth -
-							2 * FIELD_BORDER_SPACE,
-						0, CELLFLOW_MEASURE,
-						0, 0, &th,
-						(int *) 0, (int *) 0);
-					field->rowHeight = th +
-						2 * FIELD_BORDER_SPACE;
-					}
-
-
-#ifndef DISABLE_TRACE
-				if (htmlwTrace) {
-					fprintf(stderr,"poured field %d,%d is dims %d,%d: %%shrink=%f\n",
-						x,y,field->colWidth,field->rowHeight,percentToShrink);
-				}
-#endif
-
 				}
 			}
 
@@ -1079,6 +1046,62 @@ int accumulateColWidth;
 			x += numAdjacent;
 			}
 		    }
+
+		/* make sure all widths in a column are the same size */
+		for (x = 0; x < t->numColumns; x++) {
+		    maxWidthOfColumn = 0;
+		    /* find biggest Width for this column */
+		    for (y = 0; y < t->numRows; y++) {
+			maxWidthOfColumn = (maxWidthOfColumn >
+				t->table[y*t->numColumns+x].colWidth)?
+				maxWidthOfColumn:
+				t->table[y*t->numColumns+x].colWidth;
+			}
+		    /* make sure they are all the same */
+		    for (y = 0; y < t->numRows; y++) {
+			t->table[y*t->numColumns+x].colWidth = maxWidthOfColumn;
+			}
+		    }
+
+		/* now flow every cell at the exact width the draw will
+		   use (the span's colWidths minus the border padding)
+		   to get its height */
+		for (x = 0; x < t->numColumns; x++) {
+			for (y = 0; y < t->numRows; y++) {
+				field = &(t->table[y*t->numColumns+x]);
+				numAdjacent = TableHowManyConnectedHorizFields
+									(t,x,y);
+				accumulateColWidth = field->colWidth;
+				for (xx = x+1; xx < x+numAdjacent+1; xx++) {
+				    accumulateColWidth +=
+					t->table[y*t->numColumns+xx].colWidth;
+				    }
+
+				if (field->type == F_TEXT) {
+					int th;
+
+					TableCellFlow(hw,
+						(struct ele_rec *) 0,
+						field, 0, 0,
+						accumulateColWidth -
+							2 * FIELD_BORDER_SPACE,
+						0, CELLFLOW_MEASURE,
+						0, 0, &th,
+						(int *) 0, (int *) 0);
+					field->rowHeight = th +
+						2 * FIELD_BORDER_SPACE;
+					}
+
+#ifndef DISABLE_TRACE
+				if (htmlwTrace) {
+					fprintf(stderr,"poured field %d,%d is dims %d,%d: %%shrink=%f\n",
+						x,y,field->colWidth,field->rowHeight,percentToShrink);
+				}
+#endif
+
+				}
+			}
+
 		/* divy up height with adjacent continue Vertical fields */
 		for (x = 0; x < t->numColumns; x++) {
 		    for (y = 0; y < t->numRows; y++) {
@@ -1110,36 +1133,6 @@ int accumulateColWidth;
 					maxHeightOfRow;
 				}
 			}
-
-		/* make sure all widths in a column are the same size */
-		for (x = 0; x < t->numColumns; x++) {
-		    maxWidthOfColumn = 0;
-		    /* find biggest Width for this column */
-		    for (y = 0; y < t->numRows; y++) {
-			maxWidthOfColumn = (maxWidthOfColumn >
-				t->table[y*t->numColumns+x].colWidth)?
-				maxWidthOfColumn:
-				t->table[y*t->numColumns+x].colWidth;
-			}
-		    /* fixed-size contents cannot shrink: floor the column
-		       at their width, even if that overflows the page */
-		    for (y = 0; y < t->numRows; y++) {
-			int fw;
-
-			field = &(t->table[y*t->numColumns+x]);
-			fw = 0;
-			if ((fw > 0)&&
-			    (maxWidthOfColumn < (fw +
-						2 * FIELD_BORDER_SPACE))) {
-				maxWidthOfColumn = fw +
-						2 * FIELD_BORDER_SPACE;
-				}
-			}
-		    /* make sure they are all the same */
-		    for (y = 0; y < t->numRows; y++) {
-			t->table[y*t->numColumns+x].colWidth = maxWidthOfColumn;
-			}
-		    }
 
 		}
 
